@@ -1,0 +1,70 @@
+name: Build macOS app
+
+# Builds SimVirtualLocation on a GitHub-hosted macOS runner (Xcode is preinstalled)
+# and uploads the .app as a downloadable artifact. Lets you get a patched build
+# without installing Xcode locally.
+#
+# Run it from the Actions tab -> "Build macOS app" -> "Run workflow".
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'build/**'
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: |
+          echo "Available Xcode versions:"
+          ls /Applications | grep -i '^Xcode' || true
+          echo "Selected:"
+          xcodebuild -version
+          echo "Schemes:"
+          xcodebuild -list -project SimVirtualLocation.xcodeproj
+
+      - name: Build (unsigned)
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project SimVirtualLocation.xcodeproj \
+            -scheme SimVirtualLocation \
+            -configuration Release \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM="" \
+            build
+
+      - name: Locate product
+        id: product
+        run: |
+          APP=$(find build/Build/Products -name "SimVirtualLocation.app" -maxdepth 3 | head -1)
+          if [ -z "$APP" ]; then
+            echo "::error::SimVirtualLocation.app not found"
+            find build/Build/Products -maxdepth 3 || true
+            exit 1
+          fi
+          echo "Found: $APP"
+          echo "app_path=$APP" >> "$GITHUB_OUTPUT"
+
+      - name: Package
+        run: |
+          ditto -c -k --keepParent \
+            "${{ steps.product.outputs.app_path }}" \
+            SimVirtualLocation-patched.zip
+          ls -lh SimVirtualLocation-patched.zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SimVirtualLocation-patched
+          path: SimVirtualLocation-patched.zip
+          retention-days: 14
