@@ -24,7 +24,16 @@ class Runner {
 
     private var currentTask: Process?
     private var tasks: [Process] = []
-    private let maxTasksCount = 10
+
+    /// How many `simulate-location` child processes may be alive at once. Each holds a
+    /// DVT channel open; the newest one owns the currently simulated location, and the
+    /// location survives its channel closing, so older ones can be retired immediately.
+    private let maxLiveTasks = 2
+
+    /// PIDs terminated by us while trimming the live-task window. Their stderr is the
+    /// expected SIGTERM traceback and must not reach `showAlert`, which clears
+    /// `isSimulating` and would abort an in-flight route.
+    private var reapedPIDs: Set<Int32> = []
 
     private var isStopped: Bool = false
 
@@ -33,6 +42,7 @@ class Runner {
     func stop() {
         tasks.forEach { $0.terminate() }
         tasks = []
+        reapedPIDs = []
 
         isStopped = true
     }
@@ -87,25 +97,42 @@ class Runner {
         task.standardOutput = outputPipe
         task.standardError = errorPipe
 
+        // `pymobiledevice3 simulate-location set` ends in `OSUTILS.wait_return()`, which
+        // parks in `signal.sigwait` and never exits on its own. Blocking here on
+        // `waitUntilExit()` therefore holds a Swift cooperative thread forever, and since
+        // that pool is sized to the CPU core count, a route stalls after exactly as many
+        // waypoints as there are cores. Collect stderr from a termination handler instead.
+        task.terminationHandler = { [weak self] finished in
+            guard let self = self else { return }
+
+            let wasReaped = self.runnerQueue.sync {
+                self.reapedPIDs.remove(finished.processIdentifier) != nil
+            }
+            guard !wasReaped else { return }
+
+            guard let errorData = try? errorPipe.fileHandleForReading.readToEnd() else { return }
+            let errorText = String(decoding: errorData, as: UTF8.self)
+            guard !errorText.isEmpty else { return }
+
+            Task { @MainActor in
+                showAlert(errorText)
+            }
+        }
+
         do {
             try task.run()
+
+            // Retire older processes rather than calling stop(), which tears down every
+            // task and flips isStopped, silently aborting the run in progress.
             self.runnerQueue.async {
-                if self.tasks.count > self.maxTasksCount {
-                    self.stop()
-                }
-                self.tasks.append(task)
-            }
-
-            task.waitUntilExit()
-
-            if let errorData = try errorPipe.fileHandleForReading.readToEnd() {
-                let errorText = String(decoding: errorData, as: UTF8.self)
-
-                if !errorText.isEmpty {
-                    Task { @MainActor in
-                        showAlert(errorText)
+                while self.tasks.count >= self.maxLiveTasks {
+                    let old = self.tasks.removeFirst()
+                    if old.isRunning {
+                        self.reapedPIDs.insert(old.processIdentifier)
+                        old.terminate()
                     }
                 }
+                self.tasks.append(task)
             }
         } catch {
             Task { @MainActor in
@@ -163,25 +190,42 @@ class Runner {
         task.standardOutput = outputPipe
         task.standardError = errorPipe
 
+        // `pymobiledevice3 simulate-location set` ends in `OSUTILS.wait_return()`, which
+        // parks in `signal.sigwait` and never exits on its own. Blocking here on
+        // `waitUntilExit()` therefore holds a Swift cooperative thread forever, and since
+        // that pool is sized to the CPU core count, a route stalls after exactly as many
+        // waypoints as there are cores. Collect stderr from a termination handler instead.
+        task.terminationHandler = { [weak self] finished in
+            guard let self = self else { return }
+
+            let wasReaped = self.runnerQueue.sync {
+                self.reapedPIDs.remove(finished.processIdentifier) != nil
+            }
+            guard !wasReaped else { return }
+
+            guard let errorData = try? errorPipe.fileHandleForReading.readToEnd() else { return }
+            let errorText = String(decoding: errorData, as: UTF8.self)
+            guard !errorText.isEmpty else { return }
+
+            Task { @MainActor in
+                showAlert(errorText)
+            }
+        }
+
         do {
             try task.run()
+
+            // Retire older processes rather than calling stop(), which tears down every
+            // task and flips isStopped, silently aborting the run in progress.
             self.runnerQueue.async {
-                if self.tasks.count > self.maxTasksCount {
-                    self.stop()
-                }
-                self.tasks.append(task)
-            }
-
-            task.waitUntilExit()
-
-            if let errorData = try errorPipe.fileHandleForReading.readToEnd() {
-                let errorText = String(decoding: errorData, as: UTF8.self)
-
-                if !errorText.isEmpty {
-                    Task { @MainActor in
-                        showAlert(errorText)
+                while self.tasks.count >= self.maxLiveTasks {
+                    let old = self.tasks.removeFirst()
+                    if old.isRunning {
+                        self.reapedPIDs.insert(old.processIdentifier)
+                        old.terminate()
                     }
                 }
+                self.tasks.append(task)
             }
         } catch {
             Task { @MainActor in
