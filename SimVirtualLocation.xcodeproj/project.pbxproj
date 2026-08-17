@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		AA000035280DE000001D3559 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000045280DE000001D3559 /* AppDelegate.swift */; };
+		AA000034280DE000001D3559 /* TunneldDiscovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000044280DE000001D3559 /* TunneldDiscovery.swift */; };
 		AA000033280DE000001D3559 /* LocationHoldBanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000043280DE000001D3559 /* LocationHoldBanner.swift */; };
 		AA000032280DE000001D3559 /* LocationHoldSupervisor.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000042280DE000001D3559 /* LocationHoldSupervisor.swift */; };
 		AA000031280DE000001D3559 /* LocationHoldStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000041280DE000001D3559 /* LocationHoldStatus.swift */; };
@@ -46,6 +48,8 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		AA000045280DE000001D3559 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		AA000044280DE000001D3559 /* TunneldDiscovery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TunneldDiscovery.swift; sourceTree = "<group>"; };
 		AA000043280DE000001D3559 /* LocationHoldBanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocationHoldBanner.swift; sourceTree = "<group>"; };
 		AA000042280DE000001D3559 /* LocationHoldSupervisor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocationHoldSupervisor.swift; sourceTree = "<group>"; };
 		AA000041280DE000001D3559 /* LocationHoldStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocationHoldStatus.swift; sourceTree = "<group>"; };
@@ -104,6 +108,7 @@
 				AA000018280DE000001D3559 /* ProcessRunner.swift */,
 				AA000019280DE000001D3559 /* SavedLocationsStore.swift */,
 				AA00001A280DE000001D3559 /* SimulatorDiscovery.swift */,
+				AA000044280DE000001D3559 /* TunneldDiscovery.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -128,6 +133,7 @@
 				EDFC771E2B0A54860058B13A /* LocationsView.swift */,
 				AA00001C280DE000001D3559 /* SimVirtualLocationAlertModifier.swift */,
 				AA000043280DE000001D3559 /* LocationHoldBanner.swift */,
+				AA000045280DE000001D3559 /* AppDelegate.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -286,6 +292,8 @@
 			buildActionMask = 2147483647;
 			files = (
 				AA000031280DE000001D3559 /* LocationHoldStatus.swift in Sources */,
+				AA000034280DE000001D3559 /* TunneldDiscovery.swift in Sources */,
+				AA000035280DE000001D3559 /* AppDelegate.swift in Sources */,
 				AA000032280DE000001D3559 /* LocationHoldSupervisor.swift in Sources */,
 				AA000033280DE000001D3559 /* LocationHoldBanner.swift in Sources */,
 				ED8824F627C38044007499B7 /* LocationController.swift in Sources */,

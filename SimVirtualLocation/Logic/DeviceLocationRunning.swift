@@ -11,6 +11,10 @@ protocol DeviceLocationRunning: IOSProcessLaunching {
     var log: ((String) -> Void)? { get set }
     var pymobiledevicePath: String? { get set }
 
+    /// Fired on the main thread the instant a long-lived device session dies on its
+    /// own, so the point can be re-applied without waiting for a poll.
+    var onSessionEnded: ((String) -> Void)? { get set }
+
     /// `true` while a long-lived helper process is holding a device session open.
     var isHoldingSession: Bool { get }
 

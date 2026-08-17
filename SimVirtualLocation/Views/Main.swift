@@ -9,11 +9,17 @@ import SwiftUI
 
 @main
 struct SimVirtualLocationApp: App {
+
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var root = AppRootState()
 
     var body: some Scene {
         WindowGroup {
             ContentView(mapView: root.mapView, locationController: root.locationController)
+                .onAppear {
+                    // The delegate refuses to quit while a point is being held.
+                    appDelegate.locationController = root.locationController
+                }
         }
     }
 }

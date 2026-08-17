@@ -20,4 +20,13 @@ enum AppStorageKey {
 
     static let keepAliveEnabled = "keep_alive_enabled"
     static let keepAliveInterval = "keep_alive_interval"
+
+    /// Discover the iOS 17+ RSD address/port from `pymobiledevice3 remote tunneld`.
+    static let autoDiscoverRSD = "auto_discover_rsd"
+
+    /// The point being held, so a crash or a restart resumes it instead of leaving
+    /// the device on real GPS.
+    static let isHolding = "is_holding"
+    static let heldLatitude = "held_latitude"
+    static let heldLongitude = "held_longitude"
 }

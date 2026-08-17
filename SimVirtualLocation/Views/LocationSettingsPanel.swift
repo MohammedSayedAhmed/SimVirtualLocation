@@ -114,11 +114,11 @@ struct LocationSettingsPanel: View {
 
                     if locationController.isKeepAliveEnabled {
                         Picker("Re-apply every", selection: $locationController.keepAliveInterval) {
+                            Text("2s").tag(2.0)
                             Text("5s").tag(5.0)
                             Text("10s").tag(10.0)
                             Text("15s").tag(15.0)
                             Text("30s").tag(30.0)
-                            Text("60s").tag(60.0)
                         }
                         .pickerStyle(.segmented)
                     }

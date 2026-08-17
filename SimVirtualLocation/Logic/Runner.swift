@@ -27,6 +27,11 @@ class Runner {
     var log: ((String) -> Void)?
     var pymobiledevicePath: String?
 
+    /// Fired the instant a long-lived device session dies on its own, so the point
+    /// can be re-applied immediately instead of waiting for the next keep-alive tick.
+    /// Always delivered on the main thread.
+    var onSessionEnded: ((String) -> Void)?
+
     /// `true` while a long-lived helper process is holding a device session open.
     ///
     /// On iOS 17+ the DVT location channel closes with the process, so an alive
@@ -372,7 +377,7 @@ class Runner {
 
         if !task.wait(upTo: Runner.sessionGracePeriod) {
             if adoptLongRunningProcess {
-                adopt(task)
+                promote(sessionProcess: task)
                 log?("pymobiledevice3 is holding the device session open (pid \(task.processIdentifier))")
                 return .holding
             }
@@ -400,24 +405,30 @@ class Runner {
 
         logToolOutput(stdout: out, stderr: err)
 
+        // The new point has landed. Only now is it safe to drop a session that was
+        // holding the previous one — tearing it down any earlier would expose real
+        // GPS for as long as the replacement took to connect.
+        promote(sessionProcess: nil)
+
         return .success
     }
 
-    private func adopt(_ task: Process) {
+    /// Make before break: installs the session that is now holding the point (or
+    /// `nil` when the transport is one-shot) and only then retires the previous one.
+    private func promote(sessionProcess: Process?) {
         let previous: Process?
 
         holdLock.lock()
         previous = holdProcess
-        holdProcess = task
+        holdProcess = sessionProcess
         holdExitReason = nil
         holdLock.unlock()
 
-        if let previous, previous !== task {
-            // Make before break: the replacement is already holding the point, so the
-            // old session can go away without a gap on real GPS.
-            DispatchQueue.global(qos: .userInitiated).async {
-                previous.terminateNow()
-            }
+        guard let previous, previous !== sessionProcess else { return }
+
+        log?("Retiring the superseded device session (pid \(previous.processIdentifier))")
+        DispatchQueue.global(qos: .userInitiated).async {
+            previous.terminateNow()
         }
     }
 
@@ -448,6 +459,12 @@ class Runner {
         holdLock.unlock()
 
         log?("Device session ended: \(reason)")
+
+        // Do not wait for a poll: every millisecond between the session dying and the
+        // point being re-applied is a millisecond of real GPS.
+        DispatchQueue.main.async { [weak self] in
+            self?.onSessionEnded?(reason)
+        }
     }
 
     private func logToolOutput(stdout: String, stderr: String) {

@@ -29,10 +29,14 @@ final class LocationHoldSupervisor {
         case appActivated = "app activated"
         case settingsChanged = "settings changed"
         case manual = "manual re-apply"
+        case sessionEnded = "device session died"
+        case restored = "restored after restart"
     }
 
-    static let defaultKeepAliveInterval: TimeInterval = 15
-    static let minimumKeepAliveInterval: TimeInterval = 3
+    /// Deliberately short. This is the ceiling on how long the device can sit on real
+    /// GPS after a silent revert that produced no error to react to.
+    static let defaultKeepAliveInterval: TimeInterval = 5
+    static let minimumKeepAliveInterval: TimeInterval = 2
     static let maximumKeepAliveInterval: TimeInterval = 300
 
     /// Consecutive failures tolerated before the hold is declared broken. Below this
@@ -84,7 +88,13 @@ final class LocationHoldSupervisor {
                  ? "Keep-alive enabled — the point will be re-applied every \(Int(keepAliveInterval))s"
                  : "Keep-alive disabled — the location will not be re-applied or verified")
             restartTimers()
-            if isKeepAliveEnabled { reapplyNow(trigger: .settingsChanged) }
+            if isKeepAliveEnabled {
+                reapplyNow(trigger: .settingsChanged)
+            } else if case .hold(let point) = mode {
+                // Without a keep-alive nothing can confirm the point is still applied,
+                // so it must not keep showing as healthy.
+                status = .unverified(coordinate: point, appliedAt: lastConfirmedAt ?? Date())
+            }
         }
     }
 
@@ -196,6 +206,20 @@ final class LocationHoldSupervisor {
         }
     }
 
+    /// Called the moment a long-lived device session dies on its own.
+    ///
+    /// This is the difference between a sub-second blip and up to a full keep-alive
+    /// interval of real GPS, so it re-applies immediately rather than scheduling.
+    func sessionEnded(reason: String) {
+        guard case .hold(let point) = mode else { return }
+
+        handleFailure(reason: reason, point: point)
+
+        // `handleFailure` schedules a backed-off retry; a session death is a known,
+        // specific event, so go straight at it instead of waiting for that.
+        reapplyNow(trigger: .sessionEnded)
+    }
+
     /// Re-applies the held point right now, outside the keep-alive schedule.
     func reapplyNow(trigger: Trigger) {
         guard case .hold(let point) = mode else { return }
@@ -246,7 +270,12 @@ final class LocationHoldSupervisor {
         let now = Date()
         lastConfirmedAt = now
         consecutiveFailures = 0
-        status = .holding(coordinate: point, confirmedAt: now, viaLiveSession: viaLiveSession)
+
+        if isKeepAliveEnabled {
+            status = .holding(coordinate: point, confirmedAt: now, viaLiveSession: viaLiveSession)
+        } else {
+            status = .unverified(coordinate: point, appliedAt: now)
+        }
     }
 
     private func handleFailure(reason: String, point: Coordinate?) {
@@ -350,7 +379,7 @@ final class LocationHoldSupervisor {
         // permanently broken setup (no pymobiledevice3, no device) settles into a slow
         // poll instead of relaunching a process every couple of seconds forever. The
         // keep-alive tick still runs underneath, so this only ever adds attempts.
-        let delay = min(pow(2.0, Double(consecutiveFailures - 1)) * 2.0, 60)
+        let delay = min(pow(2.0, Double(consecutiveFailures - 1)), 15)
 
         let timer = Timer(timeInterval: delay, repeats: false) { [weak self] _ in
             guard let self else { return }

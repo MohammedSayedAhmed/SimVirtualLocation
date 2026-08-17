@@ -88,6 +88,10 @@ enum LocationHoldStatus: Equatable {
     /// The hold is broken. The device is back on its real location.
     case lost(coordinate: Coordinate?, reason: String, lastConfirmedAt: Date?)
 
+    /// A point was applied, but nothing is re-checking it. It can revert at any
+    /// moment without the app noticing — never shown as healthy.
+    case unverified(coordinate: Coordinate, appliedAt: Date)
+
     var severity: Severity {
         switch self {
         case .idle:
@@ -96,7 +100,7 @@ enum LocationHoldStatus: Equatable {
             return .neutral
         case .holding, .route:
             return .ok
-        case .recovering:
+        case .recovering, .unverified:
             return .warning
         case .lost:
             return .error
@@ -108,7 +112,7 @@ enum LocationHoldStatus: Equatable {
         switch self {
         case .idle:
             return false
-        case .applying, .holding, .route, .recovering, .lost:
+        case .applying, .holding, .route, .recovering, .lost, .unverified:
             return true
         }
     }
@@ -118,7 +122,7 @@ enum LocationHoldStatus: Equatable {
         switch self {
         case .holding, .route:
             return true
-        case .idle, .applying, .recovering, .lost:
+        case .idle, .applying, .recovering, .lost, .unverified:
             return false
         }
     }
@@ -131,6 +135,8 @@ enum LocationHoldStatus: Equatable {
             return coordinate
         case .recovering(let coordinate, _, _, _), .lost(let coordinate, _, _):
             return coordinate
+        case .unverified(let coordinate, _):
+            return coordinate
         case .idle, .route:
             return nil
         }
@@ -142,6 +148,8 @@ enum LocationHoldStatus: Equatable {
             return date
         case .recovering(_, _, _, let date), .lost(_, _, let date):
             return date
+        case .unverified(_, let date):
+            return date
         case .idle, .applying:
             return nil
         }
@@ -151,7 +159,7 @@ enum LocationHoldStatus: Equatable {
         switch self {
         case .recovering(_, let reason, _, _), .lost(_, let reason, _):
             return reason
-        case .idle, .applying, .holding, .route:
+        case .idle, .applying, .holding, .route, .unverified:
             return nil
         }
     }
@@ -170,6 +178,8 @@ enum LocationHoldStatus: Equatable {
             return "Location may have dropped — retrying"
         case .lost:
             return "LOCATION NOT SET — the device is on its real GPS"
+        case .unverified:
+            return "Applied once — NOT being kept alive"
         }
     }
 
@@ -201,6 +211,10 @@ enum LocationHoldStatus: Equatable {
             let last = lastConfirmedAt.map { "Last confirmed \(Self.time($0))." } ?? "It was never confirmed."
             let point = coordinate.map { "\($0.formatted). " } ?? ""
             return "\(point)\(last) \(reason)"
+
+        case .unverified(let coordinate, let appliedAt):
+            return "\(coordinate.formatted) — applied at \(Self.time(appliedAt)). "
+                + "Turn on Keep location applied: the device can drop back to real GPS at any time and nothing will notice."
         }
     }
 

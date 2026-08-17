@@ -82,6 +82,8 @@ struct LocationHoldBanner: View {
             return "car.fill"
         case .recovering:
             return "exclamationmark.triangle.fill"
+        case .unverified:
+            return "eye.slash"
         case .lost:
             return "xmark.octagon.fill"
         }

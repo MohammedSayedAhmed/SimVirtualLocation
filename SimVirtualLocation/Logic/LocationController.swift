@@ -28,9 +28,9 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
         didSet {
             guard deviceMode != oldValue else { return }
             defaults.set(deviceMode.rawValue, forKey: AppStorageKey.deviceMode)
-            // Leaving device mode must drop the helper that is still holding a
-            // location on the phone, or it would keep running unnoticed.
-            if oldValue == .device { runner.stop() }
+            // Deliberately does not stop the old session first: the runner retires it
+            // only once the new target has accepted the point, so switching targets
+            // never opens a window on real GPS.
             locationHold.reapplyNow(trigger: .settingsChanged)
         }
     }
@@ -42,8 +42,8 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
         didSet {
             guard useRSD != oldValue else { return }
             defaults.set(useRSD, forKey: AppStorageKey.useRSD)
-            // Switching transport invalidates whatever session is open.
-            runner.stop()
+            discoveredRSD = nil
+            lastRSDDiscoveryAt = nil
             locationHold.reapplyNow(trigger: .settingsChanged)
         }
     }
@@ -63,7 +63,6 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
         didSet {
             guard platform != oldValue else { return }
             defaults.set(platform.rawValue, forKey: AppStorageKey.platform)
-            if oldValue == .iOS { runner.stop() }
             locationHold.reapplyNow(trigger: .settingsChanged)
         }
     }
@@ -82,6 +81,17 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
     }
     @Published var rsdPort: String = "" {
         didSet { defaults.set(rsdPort, forKey: AppStorageKey.rsdPort) }
+    }
+
+    /// Picks the current RSD address/port up from `pymobiledevice3 remote tunneld`,
+    /// so an iOS 17+ tunnel that restarts does not strand the device on real GPS.
+    @Published var autoDiscoverRSD: Bool = true {
+        didSet {
+            guard autoDiscoverRSD != oldValue else { return }
+            defaults.set(autoDiscoverRSD, forKey: AppStorageKey.autoDiscoverRSD)
+            discoveredRSD = nil
+            lastRSDDiscoveryAt = nil
+        }
     }
 
     /// Re-applies the held point on a timer so it cannot quietly revert to real GPS.
@@ -152,9 +162,15 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
 
     private var lastSimulatorRefreshAt: Date?
     private var lastSimulatorListError: String?
+    private var discoveredRSD: TunneldDiscovery.Endpoint?
+    private var lastRSDDiscoveryAt: Date?
     private var lastAlertText: String?
     private var lastAlertAt: Date?
     private var lastNotifiedSeverity: LocationHoldStatus.Severity = .neutral
+    private var lastNotifiedAt: Date?
+
+    /// Minimum spacing between "something is wrong" alerts at warning level.
+    private static let attentionCooldown: TimeInterval = 20
 
     @Published var savedLocations: [Location] = []
 
@@ -191,6 +207,7 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
 
         Task { @MainActor [weak self] in
             await self?.refreshDevices()
+            self?.restoreHoldIfNeeded()
         }
     }
 
@@ -417,6 +434,7 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
     /// Stops route playback and releases any held point.
     func stopSimulation() {
         stopRoutePlayback()
+        persistHold(nil)
         locationHold.release(reason: "Stopped by the user")
         runner.stop()
     }
@@ -428,6 +446,7 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
 
     func reset() {
         stopRoutePlayback()
+        persistHold(nil)
         locationHold.release(reason: "Reset")
         mapScene.resetMapVisuals()
 
@@ -644,6 +663,7 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
         selectedSimulator = defaults.string(forKey: AppStorageKey.selectedSimulator) ?? ""
         selectedDevice = defaults.string(forKey: AppStorageKey.selectedDevice) ?? ""
 
+        autoDiscoverRSD = defaults.object(forKey: AppStorageKey.autoDiscoverRSD) as? Bool ?? true
         isKeepAliveEnabled = defaults.object(forKey: AppStorageKey.keepAliveEnabled) as? Bool ?? true
 
         let storedInterval = defaults.double(forKey: AppStorageKey.keepAliveInterval)
@@ -676,6 +696,12 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
             self?.runner.consumeHoldFailureReason()
         }
 
+        // Reacting the instant the session dies, rather than on the next tick, is what
+        // turns a keep-alive-interval outage into a sub-second one.
+        runner.onSessionEnded = { [weak self] reason in
+            self?.locationHold.sessionEnded(reason: reason)
+        }
+
         locationHold.onStatusChange = { [weak self] status in
             self?.handleHoldStatusChange(status)
         }
@@ -685,7 +711,46 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
     /// exclusive, so playback is stopped first.
     private func hold(_ coordinate: CLLocationCoordinate2D) {
         stopRoutePlayback()
+        persistHold(Coordinate(coordinate))
         locationHold.hold(coordinate)
+    }
+
+    /// Remembers the held point so a crash, a forced quit, or a Mac restart resumes it
+    /// on next launch instead of silently leaving the device on real GPS.
+    private func persistHold(_ coordinate: Coordinate?) {
+        guard let coordinate else {
+            defaults.set(false, forKey: AppStorageKey.isHolding)
+            return
+        }
+
+        defaults.set(coordinate.latitude, forKey: AppStorageKey.heldLatitude)
+        defaults.set(coordinate.longitude, forKey: AppStorageKey.heldLongitude)
+        defaults.set(true, forKey: AppStorageKey.isHolding)
+    }
+
+    @MainActor
+    private func restoreHoldIfNeeded() {
+        guard defaults.bool(forKey: AppStorageKey.isHolding) else { return }
+
+        let latitude = defaults.double(forKey: AppStorageKey.heldLatitude)
+        let longitude = defaults.double(forKey: AppStorageKey.heldLongitude)
+
+        guard CoordinateParsing.isValid(latitude: latitude, longitude: longitude),
+              !(latitude == 0 && longitude == 0) else {
+            defaults.set(false, forKey: AppStorageKey.isHolding)
+            return
+        }
+
+        log("Resuming the location hold left over from the previous run")
+
+        if pointsMode == .single {
+            putLocationOnMap(location: Location(name: "", latitude: latitude, longitude: longitude))
+        }
+
+        locationHold.hold(
+            CLLocationCoordinate2D(latitude: latitude, longitude: longitude),
+            trigger: .restored
+        )
     }
 
     private func handleHoldStatusChange(_ status: LocationHoldStatus) {
@@ -697,6 +762,15 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
         guard severity == .warning || severity == .error, severity != lastNotifiedSeverity else {
             return
         }
+
+        // A flapping session recovers between every attempt, and beeping on each swing
+        // back to amber would train the user to ignore the sound. Escalation to a
+        // broken hold always gets through.
+        if severity == .warning, let lastNotifiedAt,
+           Date().timeIntervalSince(lastNotifiedAt) < Self.attentionCooldown {
+            return
+        }
+        lastNotifiedAt = Date()
 
         // The user is very likely driving and not watching the window. Make the app
         // announce itself instead of failing quietly behind a green label.
@@ -734,7 +808,12 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
 
         if deviceMode == .device {
             if useRSD {
-                return await runner.runOnNewIos(location: location, rsdAddress: rsdAddress, rsdPort: rsdPort)
+                let endpoint = await resolveRSD()
+                return await runner.runOnNewIos(
+                    location: location,
+                    rsdAddress: endpoint.address,
+                    rsdPort: endpoint.port
+                )
             }
             return await runner.runOnIos(location: location)
         }
@@ -753,6 +832,40 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
             selectedSimulator: selectedSimulator,
             bootedSimulators: bootedSimulators
         )
+    }
+
+    /// The RSD address changes every time the tunnel is re-established. When tunneld
+    /// is running it knows the current one, which is the difference between recovering
+    /// on its own and waiting for the user to notice and paste a new address.
+    @MainActor
+    private func resolveRSD() async -> (address: String, port: String) {
+        guard autoDiscoverRSD else { return (rsdAddress, rsdPort) }
+
+        let isStale = lastRSDDiscoveryAt.map { Date().timeIntervalSince($0) > 3 } ?? true
+
+        if isStale {
+            lastRSDDiscoveryAt = Date()
+
+            let endpoint = await TunneldDiscovery.fetch(
+                preferredUDID: selectedDevice.isEmpty ? nil : selectedDevice
+            )
+
+            if let endpoint {
+                if discoveredRSD != endpoint {
+                    log("tunneld reports RSD \(endpoint.address) port \(endpoint.port)")
+                }
+                discoveredRSD = endpoint
+                // Mirror into the fields so the panel shows what is actually in use.
+                if rsdAddress != endpoint.address { rsdAddress = endpoint.address }
+                if rsdPort != endpoint.port { rsdPort = endpoint.port }
+            }
+        }
+
+        if let discoveredRSD {
+            return (discoveredRSD.address, discoveredRSD.port)
+        }
+
+        return (rsdAddress, rsdPort)
     }
 
     private func shouldRefreshSimulators() -> Bool {
@@ -779,6 +892,7 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
     }
 
     private func startRoutePlayback() {
+        persistHold(nil)
         timer?.invalidate()
         timer = nil
         isSimulating = true
@@ -806,6 +920,7 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
     private func performMovement() {
         guard isSimulating, tracks.count > 0, currentTrackIndex < tracks.count else {
             stopRoutePlayback()
+            persistHold(nil)
             locationHold.release(reason: "Route playback finished")
             printTimesToLog()
             return
