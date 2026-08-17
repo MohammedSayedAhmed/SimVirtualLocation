@@ -1,0 +1,39 @@
+name: Build
+
+# Compiles the app so type errors and broken call sites surface on the pull request
+# instead of the first time someone opens Xcode.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: xcodebuild (macOS)
+    runs-on: macos-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: Build
+        run: |
+          xcodebuild build \
+            -project SimVirtualLocation.xcodeproj \
+            -scheme SimVirtualLocation \
+            -configuration Debug \
+            -destination 'platform=macOS' \
+            ONLY_ACTIVE_ARCH=YES \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY= \
+            CODE_SIGN_ENTITLEMENTS=
