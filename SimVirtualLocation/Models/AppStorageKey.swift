@@ -9,4 +9,15 @@ enum AppStorageKey {
     static let adbPath = "adb_path"
     static let adbDeviceId = "adb_device_id"
     static let isEmulator = "is_emulator"
+
+    /// Stores `DeviceMode.rawValue`.
+    static let deviceMode = "device_mode"
+    static let useRSD = "use_rsd"
+    static let rsdAddress = "rsd_address"
+    static let rsdPort = "rsd_port"
+    static let selectedSimulator = "selected_simulator"
+    static let selectedDevice = "selected_device"
+
+    static let keepAliveEnabled = "keep_alive_enabled"
+    static let keepAliveInterval = "keep_alive_interval"
 }

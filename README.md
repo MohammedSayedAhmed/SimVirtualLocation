@@ -7,6 +7,30 @@ Posibilities:
 - set location to current Mac's location
 - set location to point on map
 - make route between two points and simulate moving with desired speed
+- keeps the point applied and tells you the moment it stops working
+
+## Keeping a location applied
+
+Every transport used to mock a location is one-shot or tied to a live session: the
+developer-disk-image service drops the simulation when its connection closes, the
+iOS 17+ DVT channel dies with the `pymobiledevice3` process behind it, and the
+simulator notification is overridden by anything else that sets a location. Setting a
+point once is therefore not enough — it can revert to real GPS on its own.
+
+SimVirtualLocation re-applies the held point on a timer (`Keep location applied`,
+15s by default), checks the result of every attempt, and shows the real state in the
+banner at the top of the window:
+
+| Banner | Meaning |
+| --- | --- |
+| **Location held** (green) | The point was confirmed applied, with the time of the last confirmation. |
+| **Location may have dropped** (amber) | An attempt failed; the app is retrying and shows why. |
+| **LOCATION NOT SET** (red) | Three attempts in a row failed. The device is on its real GPS. |
+
+Anything other than green also beeps and bounces the dock icon, so a hold that breaks
+while you are away from the Mac does not go unnoticed. Common causes are named
+directly in the banner — a locked iPhone, an RSD tunnel that needs restarting, an
+unplugged cable, a simulator that shut down.
 
 You can dowload compiled and signed app [here](https://github.com/nexron171/SimVirtualLocation/releases).
 

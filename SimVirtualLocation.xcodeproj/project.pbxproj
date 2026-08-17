@@ -7,6 +7,9 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		AA000033280DE000001D3559 /* LocationHoldBanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000043280DE000001D3559 /* LocationHoldBanner.swift */; };
+		AA000032280DE000001D3559 /* LocationHoldSupervisor.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000042280DE000001D3559 /* LocationHoldSupervisor.swift */; };
+		AA000031280DE000001D3559 /* LocationHoldStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000041280DE000001D3559 /* LocationHoldStatus.swift */; };
 		AA000001280DE000001D3559 /* DeviceLocationRunning.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000011280DE000001D3559 /* DeviceLocationRunning.swift */; };
 		AA000002280DE000001D3559 /* IOSProcessLaunching.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000012280DE000001D3559 /* IOSProcessLaunching.swift */; };
 		AA000003280DE000001D3559 /* MapSceneCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000013280DE000001D3559 /* MapSceneCoordinator.swift */; };
@@ -43,6 +46,9 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		AA000043280DE000001D3559 /* LocationHoldBanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocationHoldBanner.swift; sourceTree = "<group>"; };
+		AA000042280DE000001D3559 /* LocationHoldSupervisor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocationHoldSupervisor.swift; sourceTree = "<group>"; };
+		AA000041280DE000001D3559 /* LocationHoldStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocationHoldStatus.swift; sourceTree = "<group>"; };
 		AA000011280DE000001D3559 /* DeviceLocationRunning.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceLocationRunning.swift; sourceTree = "<group>"; };
 		AA000012280DE000001D3559 /* IOSProcessLaunching.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IOSProcessLaunching.swift; sourceTree = "<group>"; };
 		AA000013280DE000001D3559 /* MapSceneCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MapSceneCoordinator.swift; sourceTree = "<group>"; };
@@ -121,6 +127,7 @@
 				ED5EB083280DE263004D3559 /* LocationSettingsPanel.swift */,
 				EDFC771E2B0A54860058B13A /* LocationsView.swift */,
 				AA00001C280DE000001D3559 /* SimVirtualLocationAlertModifier.swift */,
+				AA000043280DE000001D3559 /* LocationHoldBanner.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -152,6 +159,7 @@
 				AA000011280DE000001D3559 /* DeviceLocationRunning.swift */,
 				AA000012280DE000001D3559 /* IOSProcessLaunching.swift */,
 				AA000013280DE000001D3559 /* MapSceneCoordinator.swift */,
+				AA000042280DE000001D3559 /* LocationHoldSupervisor.swift */,
 			);
 			path = Logic;
 			sourceTree = "<group>";
@@ -167,6 +175,7 @@
 				AA000014280DE000001D3559 /* AppPlatform.swift */,
 				AA000015280DE000001D3559 /* AppStorageKey.swift */,
 				AA000016280DE000001D3559 /* LocationModes.swift */,
+				AA000041280DE000001D3559 /* LocationHoldStatus.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -276,6 +285,9 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				AA000031280DE000001D3559 /* LocationHoldStatus.swift in Sources */,
+				AA000032280DE000001D3559 /* LocationHoldSupervisor.swift in Sources */,
+				AA000033280DE000001D3559 /* LocationHoldBanner.swift in Sources */,
 				ED8824F627C38044007499B7 /* LocationController.swift in Sources */,
 				ED82D39227C1FC8C0093656B /* MapView.swift in Sources */,
 				ED82D38E27C1FC2C0093656B /* Main.swift in Sources */,
