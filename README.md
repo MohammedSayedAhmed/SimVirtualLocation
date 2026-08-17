@@ -7,6 +7,61 @@ Posibilities:
 - set location to current Mac's location
 - set location to point on map
 - make route between two points and simulate moving with desired speed
+- keeps the point applied and tells you the moment it stops working
+
+## Keeping a location applied
+
+Every transport used to mock a location is one-shot or tied to a live session: the
+developer-disk-image service drops the simulation when its connection closes, the
+iOS 17+ DVT channel dies with the `pymobiledevice3` process behind it, and the
+simulator notification is overridden by anything else that sets a location. Setting a
+point once is therefore not enough — it can revert to real GPS on its own.
+
+SimVirtualLocation treats a set point as something it has to keep defending:
+
+- **Re-applies it continuously.** `Keep location applied` re-pushes the point every 5s
+  by default (2s–30s). On iOS 17+ a live session is the hold, so it is verified rather
+  than relaunched.
+- **Reacts the instant a session dies.** The helper process is watched, and its death
+  triggers an immediate re-apply — not a wait for the next tick.
+- **Never breaks before it makes.** A session holding the old point is retired only
+  after the replacement has been accepted, so changing target, transport, or point
+  does not open a window on real GPS.
+- **Tracks the iOS 17+ tunnel.** With `sudo pymobiledevice3 remote tunneld` running and
+  `Track tunnel automatically` on, the app reads the current RSD address itself, so a
+  tunnel that restarts recovers without you pasting anything.
+- **Survives its own restart.** The held point is persisted; if the app crashes or the
+  Mac reboots, it resumes the hold on next launch.
+- **Refuses to quietly go away.** Quitting or closing the window while a point is held
+  asks first, and the Mac is kept from idle-sleeping.
+
+The banner at the top of the window is driven only by confirmed injections:
+
+| Banner | Meaning |
+| --- | --- |
+| **Location held** (green) | The point was confirmed applied, with the time of the last confirmation. |
+| **Applied once — NOT being kept alive** (amber) | `Keep location applied` is off, so nothing is verifying the point. |
+| **Location may have dropped** (amber) | An attempt failed; the app is retrying and shows why. |
+| **LOCATION NOT SET** (red) | Three attempts in a row failed. The device is on its real GPS. |
+
+Anything other than green also beeps and bounces the dock icon, so a hold that breaks
+while you are away from the Mac does not go unnoticed. Common causes are named
+directly in the banner — a locked iPhone, a tunnel that needs restarting, an unplugged
+cable, a simulator that shut down.
+
+### What the app cannot prevent
+
+The device, not the Mac, owns the final decision, and some events end a hold no matter
+what this app does. In each case the app re-establishes the point as soon as it
+physically can, and says so loudly in the meantime:
+
+- the USB cable is unplugged, or the iPhone is locked in a way that blocks the service
+- the iPhone reboots, or Developer Mode / the mounted disk image goes away
+- the Mac sleeps (closing the lid), loses power, or is force-quit
+- no tunnel is running at all on iOS 17+, and none can be started without `sudo`
+
+For an unattended run, keep the Mac awake and plugged in, keep `tunneld` running, and
+watch the banner — it is the only honest signal of whether the point is still applied.
 
 You can dowload compiled and signed app [here](https://github.com/nexron171/SimVirtualLocation/releases).
 

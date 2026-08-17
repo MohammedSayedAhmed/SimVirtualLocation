@@ -70,7 +70,15 @@ struct RSDHelpSheet: View {
 
             Text(
                 """
-                iOS 17+ requires a tunnel to the device (CoreDevice/RemoteXPC). Run a command from the pymobiledevice3 documentation in Terminal—for example, on iOS 17.4+:
+                iOS 17+ requires a tunnel to the device (CoreDevice/RemoteXPC).
+
+                Recommended — run the tunnel daemon and leave it running:
+
+                sudo python3 -m pymobiledevice3 remote tunneld
+
+                It re-establishes tunnels by itself when the device reconnects, and with "Track tunnel automatically" on, SimVirtualLocation reads the current address from it. That combination is what keeps a held point from dropping to real GPS when a tunnel restarts.
+
+                Manual alternative—for example, on iOS 17.4+:
 
                 sudo python3 -m pymobiledevice3 lockdown start-tunnel
 
@@ -78,7 +86,7 @@ struct RSDHelpSheet: View {
 
                 sudo python3 -m pymobiledevice3 remote start-tunnel
 
-                The output will include "RSD Address" and "RSD Port" lines—copy them into the fields above. Keep the tunnel running while you mock location.
+                The output will include "RSD Address" and "RSD Port" lines—copy them into the fields above. Keep the tunnel running while you mock location, and re-paste the values every time you restart it.
                 """
             )
             .font(.body)
@@ -135,6 +143,17 @@ struct iOSDeviceSettings: View {
                     Text("iOS 17+")
                 }
                 if locationController.useRSD {
+                    Toggle(isOn: $locationController.autoDiscoverRSD) {
+                        Text("Track tunnel automatically")
+                    }
+
+                    Text(locationController.autoDiscoverRSD
+                         ? "Reads the live address from `sudo pymobiledevice3 remote tunneld`, so a tunnel that restarts does not leave the device on real GPS. The fields below follow it."
+                         : "The address changes every time the tunnel restarts; you have to paste the new one yourself.")
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+
                     TextField("RSD Address", text: $locationController.rsdAddress)
                     TextField("RSD Port", text: $locationController.rsdPort)
 

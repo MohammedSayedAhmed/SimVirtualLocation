@@ -104,6 +104,28 @@ struct LocationSettingsPanel: View {
             }
 
             GroupBox {
+                VStack(alignment: .leading, spacing: 6) {
+                    Toggle("Keep location applied", isOn: $locationController.isKeepAliveEnabled)
+
+                    Text("Re-applies the point on a timer and verifies every attempt. Without it a dropped USB session, a restarted iOS 17+ tunnel, or a simulator reboot silently returns the device to real GPS.")
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    if locationController.isKeepAliveEnabled {
+                        Picker("Re-apply every", selection: $locationController.keepAliveInterval) {
+                            Text("2s").tag(2.0)
+                            Text("5s").tag(5.0)
+                            Text("10s").tag(10.0)
+                            Text("15s").tag(15.0)
+                            Text("30s").tag(30.0)
+                        }
+                        .pickerStyle(.segmented)
+                    }
+                }
+            }
+
+            GroupBox {
                 VStack(alignment: .leading) {
                     Slider(value: $locationController.speed, in: 5...200, step: 5) {
                         Text("Speed")
@@ -111,7 +133,7 @@ struct LocationSettingsPanel: View {
                     Text("\(Int(locationController.speed.rounded(.up))) km/h")
                 }
             }
-            
+
             GroupBox {
                 if locationController.useRSD {
                     Picker("Location update frequency", selection: $locationController.timeScale) {
