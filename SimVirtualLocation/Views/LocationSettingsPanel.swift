@@ -117,6 +117,43 @@ struct LocationSettingsPanel: View {
             }
 
             GroupBox {
+                VStack(alignment: .leading, spacing: 6) {
+                    Toggle("Keep location applied", isOn: $locationController.isKeepAliveEnabled)
+
+                    Text("A set point is released by the device a short while after its session ends. Re-applying keeps it in place instead of quietly returning to real GPS.")
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    if locationController.isKeepAliveEnabled {
+                        Picker("Re-apply every", selection: $locationController.keepAliveInterval) {
+                            Text("10s").tag(10.0)
+                            Text("30s").tag(30.0)
+                            Text("60s").tag(60.0)
+                            Text("2m").tag(120.0)
+                        }
+                        .pickerStyle(.segmented)
+                    }
+
+                    if let summary = locationController.holdSummary {
+                        HStack(spacing: 6) {
+                            Text(summary)
+                                .font(.system(size: 10))
+                                .foregroundColor(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+
+                            Spacer(minLength: 4)
+
+                            Button("Re-apply") {
+                                locationController.reapplyHeldLocation()
+                            }
+                            .font(.system(size: 10))
+                        }
+                    }
+                }
+            }
+
+            GroupBox {
                 VStack(alignment: .leading) {
                     Slider(
                         value: $locationController.speed,

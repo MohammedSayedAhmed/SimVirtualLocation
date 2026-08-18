@@ -7,7 +7,12 @@ protocol DeviceLocationRunning: IOSProcessLaunching {
     var log: ((String) -> Void)? { get set }
     var onActivity: ((DeviceActivity) -> Void)? { get set }
     var onLocationPlayed: ((Double, Double) -> Void)? { get set }
+    var onLocationConfirmed: (() -> Void)? { get set }
+    var onSessionEnded: ((String?) -> Void)? { get set }
     var pymobiledevicePath: String? { get set }
+
+    /// `true` while a `simulate-location set` process is still holding a point open.
+    var isLocationSessionAlive: Bool { get }
 
     func stop()
 

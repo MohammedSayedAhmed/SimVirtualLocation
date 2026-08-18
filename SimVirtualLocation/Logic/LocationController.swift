@@ -48,6 +48,26 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
     /// Progress of the current device operation, shown next to the device picker.
     @Published var activity: DeviceActivity = .idle
 
+    /// Re-apply a single set point periodically so it cannot lapse back to real GPS.
+    @Published var isKeepAliveEnabled: Bool = true {
+        didSet {
+            guard isKeepAliveEnabled != oldValue else { return }
+            defaults.set(isKeepAliveEnabled, forKey: AppStorageKey.keepLocationApplied)
+            locationHold.isEnabled = isKeepAliveEnabled
+        }
+    }
+
+    @Published var keepAliveInterval: Double = LocationHoldSupervisor.defaultInterval {
+        didSet {
+            guard keepAliveInterval != oldValue else { return }
+            defaults.set(keepAliveInterval, forKey: AppStorageKey.keepAliveInterval)
+            locationHold.interval = keepAliveInterval
+        }
+    }
+
+    /// One line describing the held point, or `nil` when nothing is being held.
+    @Published private(set) var holdSummary: String?
+
     /// True while a simulation is suspended and can be resumed from the same point.
     @Published var isPaused = false
 
@@ -113,6 +133,7 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
     private let mapView: MapView
     private let mapScene: MapSceneCoordinator
     private let runner: DeviceLocationRunning
+    private let locationHold = LocationHoldSupervisor()
     private let savedLocationsStore: SavedLocationsStore
     private let locationManager = CLLocationManager()
     private let defaults: UserDefaults = UserDefaults.standard
@@ -163,6 +184,22 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
                 self?.activity = activity
             }
         }
+
+        runner.onLocationConfirmed = { [weak self] in
+            DispatchQueue.main.async {
+                self?.locationHold.confirmApplied()
+            }
+        }
+
+        // The point does not outlive its session for long, so put it back as soon as
+        // the session goes away instead of waiting for the next keep-alive tick.
+        runner.onSessionEnded = { [weak self] reason in
+            DispatchQueue.main.async {
+                self?.locationHold.sessionEnded(reason: reason)
+            }
+        }
+
+        configureLocationHold()
 
         runner.log = { [weak self] message in
             DispatchQueue.main.async {
@@ -301,7 +338,7 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
             showAlert("Current location is unavailable")
             return
         }
-        run(location: location)
+        holdLocation(location)
     }
 
     func setSelectedLocation(toBPoint: Bool = false) {
@@ -311,13 +348,13 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
                 showAlert("Point B is not selected")
                 return
             }
-            run(location: endpoints[1].coordinate)
+            holdLocation(endpoints[1].coordinate)
         } else {
             guard let annotation = endpoints.first else {
                 showAlert("Point A is not selected")
                 return
             }
-            run(location: annotation.coordinate)
+            holdLocation(annotation.coordinate)
         }
     }
 
@@ -520,6 +557,7 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
         isSimulating = false
         isPlayingRoute = false
         isPaused = false
+        locationHold.release()
         runner.stop()
     }
 
@@ -602,6 +640,7 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
     func reset() {
         mapScene.resetMapVisuals()
         clearRouteState()
+        locationHold.release()
 
         if platform == .iOS {
             runner.resetIos(showAlert: showAlert)
@@ -746,7 +785,7 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
         }
 
         putLocationOnMap(location: Location(name: "", latitude: lat, longitude: lng))
-        run(location: CLLocationCoordinate2D(latitude: lat, longitude: lng))
+        holdLocation(CLLocationCoordinate2D(latitude: lat, longitude: lng))
     }
 
     func setToCoordinate(latLngString: String = "") {
@@ -913,6 +952,71 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
         }
     }
 
+    private func configureLocationHold() {
+        isKeepAliveEnabled = defaults.object(forKey: AppStorageKey.keepLocationApplied) as? Bool ?? true
+
+        let storedInterval = defaults.double(forKey: AppStorageKey.keepAliveInterval)
+        keepAliveInterval = storedInterval > 0 ? storedInterval : LocationHoldSupervisor.defaultInterval
+
+        locationHold.isEnabled = isKeepAliveEnabled
+        locationHold.interval = keepAliveInterval
+
+        locationHold.apply = { [weak self] coordinate in
+            self?.run(location: coordinate)
+        }
+
+        locationHold.isSessionAlive = { [weak self] in
+            guard let self, self.platform == .iOS, self.deviceMode == .device else { return false }
+            return self.runner.isLocationSessionAlive
+        }
+
+        locationHold.log = { [weak self] message in
+            self?.log(message)
+        }
+
+        locationHold.onStateChange = { [weak self] state in
+            self?.holdSummary = Self.describe(state)
+        }
+    }
+
+    /// Applies `coordinate` and keeps it applied, rather than setting it once.
+    private func holdLocation(_ coordinate: CLLocationCoordinate2D) {
+        locationHold.hold(coordinate)
+    }
+
+    /// Pushes the held point again on demand.
+    func reapplyHeldLocation() {
+        locationHold.reapply(trigger: .manual)
+    }
+
+    private static func describe(_ state: LocationHoldSupervisor.State) -> String? {
+        switch state {
+        case .idle:
+            return nil
+        case .held(let point, let confirmedAt):
+            return "Holding \(point.formatted) — confirmed \(holdTimeFormatter.string(from: confirmedAt))"
+        case .applying(let point):
+            return "Applying \(point.formatted)…"
+        case .failed(let point, let reason):
+            return "\(point.formatted) not applied — \(reason)"
+        }
+    }
+
+    private static let holdTimeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "HH:mm:ss"
+        return formatter
+    }()
+
+    private func reportInjectionFailure(_ error: Error) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.log("Could not apply the location: \(error.localizedDescription)")
+            self.activity = .failed(error.localizedDescription)
+        }
+    }
+
     private func run(location: CLLocationCoordinate2D) {
         defaults.set(platform.rawValue, forKey: AppStorageKey.platform)
         defaults.set(adbPath, forKey: AppStorageKey.adbPath)
@@ -925,20 +1029,32 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
         }
         if deviceMode == .device {
             if useRSD {
-                Task {
-                    try await runner.runOnNewIos(
-                        location: location,
-                        connection: iosConnection,
-                        showAlert: showAlert
-                    )
+                // `try` inside a bare `Task` discards the error: a failure to even build
+                // the command used to vanish without a word.
+                Task { [weak self] in
+                    guard let self else { return }
+                    do {
+                        try await self.runner.runOnNewIos(
+                            location: location,
+                            connection: self.iosConnection,
+                            showAlert: self.showAlert
+                        )
+                    } catch {
+                        self.reportInjectionFailure(error)
+                    }
                 }
 
             } else {
-                Task {
-                    try await runner.runOnIos(
-                        location: location,
-                        showAlert: showAlert
-                    )
+                Task { [weak self] in
+                    guard let self else { return }
+                    do {
+                        try await self.runner.runOnIos(
+                            location: location,
+                            showAlert: self.showAlert
+                        )
+                    } catch {
+                        self.reportInjectionFailure(error)
+                    }
                 }
             }
         } else {

@@ -24,6 +24,14 @@ class Runner {
     /// can follow the device instead of animating on an independent clock.
     var onLocationPlayed: ((Double, Double) -> Void)?
 
+    /// Fired when the device confirms a single point has been applied.
+    var onLocationConfirmed: (() -> Void)?
+
+    /// Fired when a `simulate-location set` session ends without us retiring it, with a
+    /// summary when it failed. The simulated point outlives the channel only briefly, so
+    /// whoever asked for that point has to re-apply it.
+    var onSessionEnded: ((String?) -> Void)?
+
     /// Partial stderr line carried between reads, since chunks split arbitrarily.
     private var playbackLogBuffer = ""
 
@@ -51,6 +59,11 @@ class Runner {
     private var routePlaybackTask: Process?
 
     // MARK: - Internal Methods
+
+    /// `true` while a `simulate-location set` process is still holding a point open.
+    var isLocationSessionAlive: Bool {
+        runnerQueue.sync { tasks.contains { $0.isRunning } }
+    }
 
     func stop() {
         stopRoutePlayback()
@@ -133,13 +146,17 @@ class Runner {
             }
             guard !wasReaped else { return }
 
+            let errorData = (try? errorPipe.fileHandleForReading.readToEnd()) ?? nil
+            let errorText = errorData.map { String(decoding: $0, as: UTF8.self) } ?? ""
+
+            // Report the session ending before judging whether it failed. Even a clean
+            // exit hands the point back to real GPS once the device's grace period runs
+            // out, so whoever is holding it needs to know either way.
+            self.onSessionEnded?(finished.terminationStatus == 0 ? nil : Self.summarize(errorText))
+
             // A clean exit is not a failure: `play` logs every waypoint to stderr, so
             // surfacing stderr unconditionally would alert at the end of every route.
-            guard finished.terminationStatus != 0 else { return }
-
-            guard let errorData = try? errorPipe.fileHandleForReading.readToEnd() else { return }
-            let errorText = String(decoding: errorData, as: UTF8.self)
-            guard !errorText.isEmpty else { return }
+            guard finished.terminationStatus != 0, !errorText.isEmpty else { return }
 
             self.onActivity?(.failed(Self.summarize(errorText)))
 
@@ -157,6 +174,7 @@ class Runner {
             if String(decoding: chunk, as: UTF8.self).contains("Ctrl+C") {
                 readyPipe.fileHandleForReading.readabilityHandler = nil
                 self?.onActivity?(.active("Location set"))
+                self?.onLocationConfirmed?()
             }
         }
 
@@ -236,13 +254,17 @@ class Runner {
             }
             guard !wasReaped else { return }
 
+            let errorData = (try? errorPipe.fileHandleForReading.readToEnd()) ?? nil
+            let errorText = errorData.map { String(decoding: $0, as: UTF8.self) } ?? ""
+
+            // Report the session ending before judging whether it failed. Even a clean
+            // exit hands the point back to real GPS once the device's grace period runs
+            // out, so whoever is holding it needs to know either way.
+            self.onSessionEnded?(finished.terminationStatus == 0 ? nil : Self.summarize(errorText))
+
             // A clean exit is not a failure: `play` logs every waypoint to stderr, so
             // surfacing stderr unconditionally would alert at the end of every route.
-            guard finished.terminationStatus != 0 else { return }
-
-            guard let errorData = try? errorPipe.fileHandleForReading.readToEnd() else { return }
-            let errorText = String(decoding: errorData, as: UTF8.self)
-            guard !errorText.isEmpty else { return }
+            guard finished.terminationStatus != 0, !errorText.isEmpty else { return }
 
             self.onActivity?(.failed(Self.summarize(errorText)))
 
@@ -260,6 +282,7 @@ class Runner {
             if String(decoding: chunk, as: UTF8.self).contains("Ctrl+C") {
                 readyPipe.fileHandleForReading.readabilityHandler = nil
                 self?.onActivity?(.active("Location set"))
+                self?.onLocationConfirmed?()
             }
         }
 
