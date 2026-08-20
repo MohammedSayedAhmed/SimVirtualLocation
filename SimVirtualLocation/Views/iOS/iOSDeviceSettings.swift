@@ -113,26 +113,6 @@ struct iOSDeviceSettings: View {
 
     var body: some View {
         GroupBox {
-            TargetSummaryRow()
-                .environmentObject(locationController)
-
-            if locationController.isTargetExpanded {
-                expandedSettings
-            }
-        }
-        .sheet(isPresented: $showRSDHelp) {
-            RSDHelpSheet()
-        }
-        .sheet(isPresented: $showDeveloperDiskHelp) {
-            DeveloperDiskImageHelpSheet()
-        }
-    }
-
-    @ViewBuilder
-    private var expandedSettings: some View {
-        Group {
-            Divider()
-
             Picker("Device mode", selection: $locationController.deviceMode) {
                 Text("Simulator").tag(DeviceMode.simulator)
                 Text("Device").tag(DeviceMode.device)
@@ -232,13 +212,12 @@ struct iOSDeviceSettings: View {
                     .buttonStyle(.link)
                 }
             }
-
-            Button("Done") {
-                withAnimation(.easeInOut(duration: 0.15)) {
-                    locationController.isTargetExpanded = false
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .trailing)
+        }
+        .sheet(isPresented: $showRSDHelp) {
+            RSDHelpSheet()
+        }
+        .sheet(isPresented: $showDeveloperDiskHelp) {
+            DeveloperDiskImageHelpSheet()
         }
     }
 }

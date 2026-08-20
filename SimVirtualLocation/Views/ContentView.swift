@@ -13,14 +13,6 @@ struct ContentView: View {
     let mapView: MapView
     @ObservedObject var locationController: LocationController
 
-    /// The log is a developer record, and most of it is a note that something worked.
-    /// Default to the lines someone could act on.
-    @State private var problemsOnly = true
-
-    private var visibleLogs: [LogEntry] {
-        problemsOnly ? locationController.logs.filter { $0.isProblem } : locationController.logs
-    }
-
     var body: some View {
         VStack(spacing: 0) {
             LocationHoldBanner()
@@ -70,16 +62,12 @@ struct ContentView: View {
 
                 ScrollView {
                     VStack(alignment: .leading, spacing: 8) {
-                        // Platform belongs with the rest of the target settings; it is
-                        // chosen once, so it only appears while those are open.
-                        if locationController.isTargetExpanded {
-                            Picker("Platform", selection: $locationController.platform) {
-                                Text("iOS").tag(AppPlatform.iOS)
-                                Text("Android").tag(AppPlatform.android)
-                            }
-                            .labelsHidden()
-                            .pickerStyle(.segmented)
+                        Picker("Device mode", selection: $locationController.platform) {
+                            Text("iOS").tag(AppPlatform.iOS)
+                            Text("Android").tag(AppPlatform.android)
                         }
+                        .labelsHidden()
+                        .pickerStyle(.segmented)
 
                         if locationController.platform == .iOS {
                             iOSPanel()
@@ -89,12 +77,18 @@ struct ContentView: View {
                                 .environmentObject(locationController)
                         }
                     }
-                    .frame(width: 308, alignment: .leading)
-                    .padding(16)
+                    .frame(width: 250, alignment: .leading)
+                    .padding(EdgeInsets(top: 16, leading: 16, bottom: 16, trailing: 0))
                 }
-                .frame(minWidth: 340, maxWidth: 340, maxHeight: .infinity)
+                .frame(minWidth: 266, maxWidth: 266, maxHeight: .infinity)
+
+                LocationsView()
+                    .environmentObject(locationController)
+                    .frame(minWidth: 300, maxWidth: 300, maxHeight: .infinity)
+                    .padding(EdgeInsets(top: 16, leading: 16, bottom: 16, trailing: 16))
+
             }
-            .frame(minWidth: 860, minHeight: 320)
+            .frame(minWidth: 1100, minHeight: 280)
             .frame(maxHeight: .infinity)
                 .onAppear {
                     locationController.updateMapRegion()
@@ -120,28 +114,10 @@ struct ContentView: View {
                         .padding(.vertical, 4)
                     }
                     .buttonStyle(PlainButtonStyle())
-
-                    if !locationController.showLogs, let latest = locationController.logs.first {
-                        Divider().frame(height: 12)
-                        Text(latest.message)
-                            .font(.system(size: 11))
-                            .foregroundColor(latest.isProblem ? .red : .secondary)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                    }
-
+                    
                     Spacer()
-
+                    
                     if locationController.showLogs {
-                        Picker("", selection: $problemsOnly) {
-                            Text("Problems").tag(true)
-                            Text("Everything").tag(false)
-                        }
-                        .labelsHidden()
-                        .pickerStyle(.segmented)
-                        .frame(width: 160)
-                        .controlSize(.small)
-
                         Button("Copy logs") {
                             let log = locationController.logs.map { entry in
                                 let date = locationController.dateFormatter.string(from: entry.date)
@@ -172,7 +148,7 @@ struct ContentView: View {
                 if locationController.showLogs {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 1) {
-                            ForEach(visibleLogs) { log in
+                            ForEach(locationController.logs) { log in
                                 HStack(spacing: 8) {
                                     Text(locationController.dateFormatter.string(from: log.date))
                                         .padding(.vertical, 4)
@@ -196,7 +172,7 @@ struct ContentView: View {
                 }
             }
         }
-        .frame(minWidth: 900, minHeight: 560)
+        .frame(minWidth: 900, minHeight: 480)
     }
 
     init(mapView: MapView, locationController: LocationController) {

@@ -13,16 +13,4 @@ struct LogEntry: Identifiable {
 
     let date: Date
     let message: String
-
-    /// Whether this line is something the user could act on, so the log can default to
-    /// showing only those. Most entries are a record of a command that worked.
-    var isProblem: Bool {
-        let lowered = message.lowercased()
-        return lowered.contains("failed")
-            || lowered.contains("error")
-            || lowered.contains("could not")
-            || lowered.contains("not reachable")
-            || lowered.contains("no device")
-            || lowered.hasPrefix("alert:")
-    }
 }

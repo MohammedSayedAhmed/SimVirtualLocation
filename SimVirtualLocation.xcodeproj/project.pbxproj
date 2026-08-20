@@ -13,7 +13,6 @@
 		AA000057280DE000001D3559 /* DayPlanStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000067280DE000001D3559 /* DayPlanStore.swift */; };
 		AA000056280DE000001D3559 /* DayPlan.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000066280DE000001D3559 /* DayPlan.swift */; };
 		AA000055280DE000001D3559 /* Coordinate.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000065280DE000001D3559 /* Coordinate.swift */; };
-		AA000054280DE000001D3559 /* TargetSummaryRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000064280DE000001D3559 /* TargetSummaryRow.swift */; };
 		AA000053280DE000001D3559 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000063280DE000001D3559 /* AppDelegate.swift */; };
 		AA000052280DE000001D3559 /* LocationHoldBanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000062280DE000001D3559 /* LocationHoldBanner.swift */; };
 		AA000051280DE000001D3559 /* LocationHoldSupervisor.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000061280DE000001D3559 /* LocationHoldSupervisor.swift */; };
@@ -63,7 +62,6 @@
 		AA000067280DE000001D3559 /* DayPlanStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DayPlanStore.swift; sourceTree = "<group>"; };
 		AA000066280DE000001D3559 /* DayPlan.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DayPlan.swift; sourceTree = "<group>"; };
 		AA000065280DE000001D3559 /* Coordinate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Coordinate.swift; sourceTree = "<group>"; };
-		AA000064280DE000001D3559 /* TargetSummaryRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TargetSummaryRow.swift; sourceTree = "<group>"; };
 		AA000063280DE000001D3559 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		AA000062280DE000001D3559 /* LocationHoldBanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocationHoldBanner.swift; sourceTree = "<group>"; };
 		AA000061280DE000001D3559 /* LocationHoldSupervisor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocationHoldSupervisor.swift; sourceTree = "<group>"; };
@@ -154,7 +152,6 @@
 				AA00001C280DE000001D3559 /* SimVirtualLocationAlertModifier.swift */,
 				AA000062280DE000001D3559 /* LocationHoldBanner.swift */,
 				AA000063280DE000001D3559 /* AppDelegate.swift */,
-				AA000064280DE000001D3559 /* TargetSummaryRow.swift */,
 				AA00006A280DE000001D3559 /* DayPlanPanel.swift */,
 				AA0000F8280DE000001D3559 /* DeviceActivityView.swift */,
 			);
@@ -324,7 +321,6 @@
 				AA000057280DE000001D3559 /* DayPlanStore.swift in Sources */,
 				AA000056280DE000001D3559 /* DayPlan.swift in Sources */,
 				AA000055280DE000001D3559 /* Coordinate.swift in Sources */,
-				AA000054280DE000001D3559 /* TargetSummaryRow.swift in Sources */,
 				AA000053280DE000001D3559 /* AppDelegate.swift in Sources */,
 				AA000052280DE000001D3559 /* LocationHoldBanner.swift in Sources */,
 				AA000051280DE000001D3559 /* LocationHoldSupervisor.swift in Sources */,

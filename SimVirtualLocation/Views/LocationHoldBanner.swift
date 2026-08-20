@@ -10,10 +10,6 @@ struct LocationHoldBanner: View {
 
     private var state: LocationHoldSupervisor.State { locationController.holdState }
 
-    /// Route playback owns the banner while it runs — otherwise the one status surface
-    /// would claim nothing is simulated while the device is being driven along a route.
-    private var isPlayingRoute: Bool { locationController.isSimulating }
-
     var body: some View {
         HStack(alignment: .center, spacing: 10) {
             Image(systemName: symbol)
@@ -25,7 +21,7 @@ struct LocationHoldBanner: View {
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundColor(tint)
 
-                if let detail = isPlayingRoute ? locationController.routeSummary : locationController.holdSummary {
+                if let detail = locationController.holdSummary {
                     Text(detail)
                         .font(.system(size: 11))
                         .foregroundColor(.secondary)
@@ -36,17 +32,7 @@ struct LocationHoldBanner: View {
 
             Spacer(minLength: 8)
 
-            if isPlayingRoute {
-                Button(locationController.isPaused ? "Resume" : "Pause") {
-                    locationController.togglePauseSimulation()
-                }
-                .font(.system(size: 11))
-
-                Button("Stop") {
-                    locationController.stopSimulation()
-                }
-                .font(.system(size: 11))
-            } else if state != .idle {
+            if state != .idle {
                 Button("Re-apply now") {
                     locationController.reapplyHeldLocation()
                 }
@@ -71,7 +57,6 @@ struct LocationHoldBanner: View {
     }
 
     private var title: String {
-        if isPlayingRoute { return locationController.isPaused ? "Route paused" : "Driving the route" }
         switch state {
         case .idle:
             return "No simulated location"
@@ -85,7 +70,6 @@ struct LocationHoldBanner: View {
     }
 
     private var tint: Color {
-        if isPlayingRoute { return locationController.isPaused ? .orange : .accentColor }
         switch state {
         case .idle:
             return .secondary
@@ -99,7 +83,6 @@ struct LocationHoldBanner: View {
     }
 
     private var symbol: String {
-        if isPlayingRoute { return locationController.isPaused ? "pause.circle.fill" : "car.fill" }
         switch state {
         case .idle:
             return "location.slash"

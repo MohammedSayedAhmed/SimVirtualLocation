@@ -12,13 +12,7 @@ struct AndroidDeviceSettings: View {
     
     var body: some View {
         GroupBox {
-            TargetSummaryRow()
-                .environmentObject(locationController)
-
-            if locationController.isTargetExpanded {
-                Divider()
-
-                TextField("ADB path", text: $locationController.adbPath)
+            TextField("ADB path", text: $locationController.adbPath)
             TextField("Device ID", text: $locationController.adbDeviceId)
             Toggle("Is emulator", isOn: $locationController.isEmulator)
             
@@ -34,14 +28,6 @@ struct AndroidDeviceSettings: View {
                 }, label: {
                     Text("Install Helper App").frame(maxWidth: .infinity)
                 })
-                }
-
-                Button("Done") {
-                    withAnimation(.easeInOut(duration: 0.15)) {
-                        locationController.isTargetExpanded = false
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .trailing)
             }
         }
     }

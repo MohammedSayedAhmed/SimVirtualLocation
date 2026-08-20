@@ -79,21 +79,6 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
     /// Whether a point is applied, being applied, or has been lost.
     @Published private(set) var holdState: LocationHoldSupervisor.State = .idle
 
-    /// Which half of the panel is showing. Placing a point needs one map pin, driving a
-    /// route needs two, so the mode owns that rather than making it a separate control.
-    @Published var panelMode: PanelMode = .place {
-        didSet {
-            guard panelMode != oldValue else { return }
-            defaults.set(panelMode.rawValue, forKey: AppStorageKey.panelMode)
-            pointsMode = panelMode == .place ? .single : .two
-            mapScene.isPlaceMode = panelMode == .place
-        }
-    }
-
-    /// True while the target picker is expanded. Collapsed is the normal state: these
-    /// controls are set once and then never touched again.
-    @Published var isTargetExpanded = false
-
     // MARK: - Day plan
 
     @Published var dayPlan = DayPlan() {
@@ -216,10 +201,6 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
 
         if defaults.object(forKey: AppStorageKey.useUserspace) != nil {
             useUserspace = defaults.bool(forKey: AppStorageKey.useUserspace)
-        }
-
-        if let storedPanelMode = PanelMode(rawValue: defaults.integer(forKey: AppStorageKey.panelMode)) {
-            panelMode = storedPanelMode
         }
 
         runner.onLocationPlayed = { [weak self] latitude, longitude in
@@ -1112,13 +1093,7 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
             guard let self else { return }
             self.holdSummary = Self.describe(state)
             self.holdState = state
-            self.mapScene.setHeldCoordinate(state.coordinate?.clCoordinate)
             self.announceIfLost(state)
-        }
-
-        mapScene.isPlaceMode = panelMode == .place
-        mapScene.onSetLocationRequested = { [weak self] coordinate in
-            self?.holdLocation(coordinate)
         }
 
         configureDayPlan()
@@ -1136,44 +1111,6 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
 
         NSSound.beep()
         _ = NSApplication.shared.requestUserAttention(.criticalRequest)
-    }
-
-    // MARK: - Target summary
-
-    /// Name of whatever the app is pointed at right now.
-    var targetName: String {
-        if platform == .android {
-            return adbDeviceId.isEmpty ? "No device set" : adbDeviceId
-        }
-        if deviceMode == .simulator {
-            let named = bootedSimulators.first { $0.id == selectedSimulator && !$0.id.isEmpty }
-            return named?.name ?? (bootedSimulators.contains { !$0.id.isEmpty } ? "All simulators" : "No simulator booted")
-        }
-        return connectedDevices.first { $0.id == selectedDevice }?.name ?? "No device connected"
-    }
-
-    /// The line under the target name: how it is reached.
-    var targetDetail: String {
-        if platform == .android {
-            return isEmulator ? "Android emulator via adb" : "Android device via adb"
-        }
-        if deviceMode == .simulator {
-            return "iOS Simulator"
-        }
-        if let device = connectedDevices.first(where: { $0.id == selectedDevice }) {
-            let transport = useRSD
-                ? (useUserspace ? "connected automatically" : "manual tunnel")
-                : "developer disk image"
-            return "iPhone · iOS \(device.version) · \(transport)"
-        }
-        return useRSD && useUserspace ? "Looking for a device…" : "iPhone"
-    }
-
-    /// Whether the target is actually reachable, for the dot on the collapsed row.
-    var isTargetReady: Bool {
-        if platform == .android { return !adbDeviceId.isEmpty && !adbPath.isEmpty }
-        if deviceMode == .simulator { return bootedSimulators.contains { !$0.id.isEmpty } }
-        return !selectedDevice.isEmpty
     }
 
     /// `true` when the target can hold a point with a long-lived `simulate-location play`

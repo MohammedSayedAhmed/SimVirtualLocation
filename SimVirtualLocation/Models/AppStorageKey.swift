@@ -18,9 +18,6 @@ enum AppStorageKey {
     static let heldLatitude = "held_latitude"
     static let heldLongitude = "held_longitude"
 
-    /// Stores `PanelMode.rawValue`.
-    static let panelMode = "panel_mode"
-
     /// The saved day plan, JSON-encoded.
     static let dayPlan = "day_plan"
 
