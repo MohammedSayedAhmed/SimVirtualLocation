@@ -1292,9 +1292,22 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
 
         let schedule = DaySchedule.build(plan: dayPlan, on: Date(), distances: distances, paths: paths)
         daySchedule = schedule
-        dayPlanStatus = schedule.hasSlippedLegs
-            ? "Some legs cannot finish before the next departure — those departures have moved later."
-            : nil
+        dayPlanStatus = Self.describeDay(schedule)
+    }
+
+    /// Anything about the worked-out day worth saying before it is run.
+    ///
+    /// A day whose last arrival has already passed still runs — it parks at the final
+    /// stop and stays there — which is correct but looks broken. Times are read against
+    /// today, so a plan set up late at night is the usual way to land there.
+    private static func describeDay(_ schedule: DaySchedule) -> String? {
+        if let last = schedule.legs.last, last.arrival < Date() {
+            return "Every departure in this plan is earlier than the current time, so running it now parks at the last stop. Times are read against today."
+        }
+        if schedule.hasSlippedLegs {
+            return "Some legs cannot finish before the next departure — those departures have moved later."
+        }
+        return nil
     }
 
     func startDayPlan() {
