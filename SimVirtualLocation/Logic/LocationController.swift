@@ -336,6 +336,9 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
 
         if previousDevices.isEmpty {
             activity = .active("Device connected")
+            // Waiting for the next keep-alive tick meant over a minute on real GPS after
+            // the cable came back, because the dead session still looked alive.
+            locationHold.targetRestored()
         } else {
             activity = .idle
         }
@@ -350,6 +353,10 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
     /// is no longer watching is worse than making them press Resume.
     private func handleDeviceDisconnected() {
         log("device disconnected")
+
+        // The helper process keeps running against a connection that no longer exists,
+        // so the hold has to be told directly — it cannot infer this from the process.
+        locationHold.targetLost(reason: "Device disconnected — the point goes back on as soon as it returns.")
 
         guard isSimulating else {
             activity = .failed("Device disconnected — location no longer simulated")
@@ -1023,6 +1030,11 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
         locationHold.isSessionAlive = { [weak self] in
             guard let self, self.usesPlaybackHold else { return false }
             return self.runner.isPlaybackRunning
+        }
+
+        locationHold.isTargetAvailable = { [weak self] in
+            guard let self, self.usesPlaybackHold else { return true }
+            return !self.selectedDevice.isEmpty
         }
 
         locationHold.log = { [weak self] message in

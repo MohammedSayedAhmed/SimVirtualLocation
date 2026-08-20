@@ -24,6 +24,7 @@ final class LocationHoldSupervisor {
         case sessionEnded = "session ended"
         case systemWake = "Mac woke from sleep"
         case manual = "manual re-apply"
+        case deviceReconnected = "device reconnected"
     }
 
     static let defaultInterval: TimeInterval = 15
@@ -35,6 +36,11 @@ final class LocationHoldSupervisor {
     /// Whether the session holding the point is still up. When it is, the point is
     /// already applied and replacing it would only hand it back.
     var isSessionAlive: (() -> Bool)?
+
+    /// Whether the target is reachable at all. A helper process outlives the connection
+    /// it was using, so "the process is running" says nothing about a device that has
+    /// gone away — asking separately is the only way to tell those apart.
+    var isTargetAvailable: (() -> Bool)?
 
     var onStateChange: ((State) -> Void)?
     var log: ((String) -> Void)?
@@ -169,8 +175,31 @@ final class LocationHoldSupervisor {
         apply?(held.clCoordinate)
     }
 
+    /// The target went away. The point is kept, but it is no longer in force.
+    func targetLost(reason: String) {
+        guard let held else { return }
+        log?("Target lost (\(reason)) — the held point is no longer applied")
+        state = .failed(held, reason: reason)
+    }
+
+    /// The target came back. Put the point on again immediately: the session that was
+    /// holding it died with the old connection, whatever its process still reports.
+    func targetRestored() {
+        guard held != nil else { return }
+        log?("Target is back — re-applying the held point")
+        reapply(trigger: .deviceReconnected)
+    }
+
     func reapply(trigger: Trigger) {
         guard let held, isEnabled else { return }
+
+        // Nothing can be applied to a device that is not there, and nothing about the
+        // old session's process proves otherwise — so say so rather than reporting a
+        // hold that is not in force.
+        if isTargetAvailable?() == false {
+            state = .failed(held, reason: "Device disconnected — the point goes back on as soon as it returns.")
+            return
+        }
 
         // Replacing a session that is still holding the point is what made the device
         // alternate between the held point and real GPS: tearing the old one down hands
