@@ -7,6 +7,12 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		AA00005A280DE000001D3559 /* DayPlanPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00006A280DE000001D3559 /* DayPlanPanel.swift */; };
+		AA000059280DE000001D3559 /* DayPlanRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000069280DE000001D3559 /* DayPlanRunner.swift */; };
+		AA000058280DE000001D3559 /* RouteFinder.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000068280DE000001D3559 /* RouteFinder.swift */; };
+		AA000057280DE000001D3559 /* DayPlanStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000067280DE000001D3559 /* DayPlanStore.swift */; };
+		AA000056280DE000001D3559 /* DayPlan.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000066280DE000001D3559 /* DayPlan.swift */; };
+		AA000055280DE000001D3559 /* Coordinate.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000065280DE000001D3559 /* Coordinate.swift */; };
 		AA000054280DE000001D3559 /* TargetSummaryRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000064280DE000001D3559 /* TargetSummaryRow.swift */; };
 		AA000053280DE000001D3559 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000063280DE000001D3559 /* AppDelegate.swift */; };
 		AA000052280DE000001D3559 /* LocationHoldBanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000062280DE000001D3559 /* LocationHoldBanner.swift */; };
@@ -51,6 +57,12 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		AA00006A280DE000001D3559 /* DayPlanPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DayPlanPanel.swift; sourceTree = "<group>"; };
+		AA000069280DE000001D3559 /* DayPlanRunner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DayPlanRunner.swift; sourceTree = "<group>"; };
+		AA000068280DE000001D3559 /* RouteFinder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RouteFinder.swift; sourceTree = "<group>"; };
+		AA000067280DE000001D3559 /* DayPlanStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DayPlanStore.swift; sourceTree = "<group>"; };
+		AA000066280DE000001D3559 /* DayPlan.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DayPlan.swift; sourceTree = "<group>"; };
+		AA000065280DE000001D3559 /* Coordinate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Coordinate.swift; sourceTree = "<group>"; };
 		AA000064280DE000001D3559 /* TargetSummaryRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TargetSummaryRow.swift; sourceTree = "<group>"; };
 		AA000063280DE000001D3559 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		AA000062280DE000001D3559 /* LocationHoldBanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocationHoldBanner.swift; sourceTree = "<group>"; };
@@ -114,6 +126,8 @@
 				AA000018280DE000001D3559 /* ProcessRunner.swift */,
 				AA000019280DE000001D3559 /* SavedLocationsStore.swift */,
 				AA00001A280DE000001D3559 /* SimulatorDiscovery.swift */,
+				AA000067280DE000001D3559 /* DayPlanStore.swift */,
+				AA000068280DE000001D3559 /* RouteFinder.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -141,6 +155,7 @@
 				AA000062280DE000001D3559 /* LocationHoldBanner.swift */,
 				AA000063280DE000001D3559 /* AppDelegate.swift */,
 				AA000064280DE000001D3559 /* TargetSummaryRow.swift */,
+				AA00006A280DE000001D3559 /* DayPlanPanel.swift */,
 				AA0000F8280DE000001D3559 /* DeviceActivityView.swift */,
 			);
 			path = Views;
@@ -173,6 +188,7 @@
 				AA000011280DE000001D3559 /* DeviceLocationRunning.swift */,
 				AA000012280DE000001D3559 /* IOSProcessLaunching.swift */,
 				AA000013280DE000001D3559 /* MapSceneCoordinator.swift */,
+				AA000069280DE000001D3559 /* DayPlanRunner.swift */,
 				AA000061280DE000001D3559 /* LocationHoldSupervisor.swift */,
 			);
 			path = Logic;
@@ -191,6 +207,8 @@
 				AA0000F4280DE000001D3559 /* IOSConnection.swift */,
 				AA000015280DE000001D3559 /* AppStorageKey.swift */,
 				AA000016280DE000001D3559 /* LocationModes.swift */,
+				AA000065280DE000001D3559 /* Coordinate.swift */,
+				AA000066280DE000001D3559 /* DayPlan.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -300,6 +318,12 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				AA00005A280DE000001D3559 /* DayPlanPanel.swift in Sources */,
+				AA000059280DE000001D3559 /* DayPlanRunner.swift in Sources */,
+				AA000058280DE000001D3559 /* RouteFinder.swift in Sources */,
+				AA000057280DE000001D3559 /* DayPlanStore.swift in Sources */,
+				AA000056280DE000001D3559 /* DayPlan.swift in Sources */,
+				AA000055280DE000001D3559 /* Coordinate.swift in Sources */,
 				AA000054280DE000001D3559 /* TargetSummaryRow.swift in Sources */,
 				AA000053280DE000001D3559 /* AppDelegate.swift in Sources */,
 				AA000052280DE000001D3559 /* LocationHoldBanner.swift in Sources */,

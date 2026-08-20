@@ -27,14 +27,19 @@ struct LocationSettingsPanel: View {
             Picker("Mode", selection: $locationController.panelMode) {
                 Text("Place").tag(PanelMode.place)
                 Text("Route").tag(PanelMode.route)
+                Text("Day").tag(PanelMode.day)
             }
             .labelsHidden()
             .pickerStyle(.segmented)
 
-            if locationController.panelMode == .place {
+            switch locationController.panelMode {
+            case .place:
                 placeControls
-            } else {
+            case .route:
                 routeControls
+            case .day:
+                DayPlanPanel()
+                    .environmentObject(locationController)
             }
 
             Spacer()

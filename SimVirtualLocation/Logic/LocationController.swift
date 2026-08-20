@@ -94,6 +94,26 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
     /// controls are set once and then never touched again.
     @Published var isTargetExpanded = false
 
+    // MARK: - Day plan
+
+    @Published var dayPlan = DayPlan() {
+        didSet {
+            guard dayPlan != oldValue else { return }
+            dayPlanStore.save(dayPlan)
+        }
+    }
+
+    /// The plan resolved against today, once every leg has been routed.
+    @Published private(set) var daySchedule: DaySchedule?
+
+    /// What the day plan is doing right now.
+    @Published private(set) var dayActivity: DayPlanRunner.Activity = .stopped
+
+    /// Set while the legs are being routed, and after a routing failure.
+    @Published private(set) var dayPlanStatus: String?
+
+    var isDayPlanRunning: Bool { dayPlanRunner.isRunning }
+
     /// True while a simulation is suspended and can be resumed from the same point.
     @Published var isPaused = false
 
@@ -160,6 +180,8 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
     private let mapScene: MapSceneCoordinator
     private let runner: DeviceLocationRunning
     private let locationHold = LocationHoldSupervisor()
+    private let dayPlanRunner = DayPlanRunner()
+    private let dayPlanStore = DayPlanStore()
     private let savedLocationsStore: SavedLocationsStore
     private let locationManager = CLLocationManager()
     private let defaults: UserDefaults = UserDefaults.standard
@@ -339,6 +361,9 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
             // Waiting for the next keep-alive tick meant over a minute on real GPS after
             // the cable came back, because the dead session still looked alive.
             locationHold.targetRestored()
+            // A leg in progress was being played by a session that died with the cable,
+            // and unlike a held point nothing else would notice.
+            dayPlanRunner.resume()
         } else {
             activity = .idle
         }
@@ -1053,6 +1078,8 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
         mapScene.onSetLocationRequested = { [weak self] coordinate in
             self?.holdLocation(coordinate)
         }
+
+        configureDayPlan()
     }
 
     /// The Mac is usually not being watched while a point is held, so a lost hold has to
@@ -1142,6 +1169,161 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
                     gpxURL: gpxURL,
                     connection: self.iosConnection,
                     activityLabel: "Location set",
+                    showAlert: self.showAlert
+                )
+            } catch {
+                self.reportInjectionFailure(error)
+            }
+        }
+    }
+
+    // MARK: - Day plan
+
+    private func configureDayPlan() {
+        dayPlan = dayPlanStore.load()
+
+        dayPlanRunner.log = { [weak self] message in self?.log(message) }
+
+        dayPlanRunner.onActivityChange = { [weak self] activity in
+            self?.dayActivity = activity
+        }
+
+        dayPlanRunner.holdPoint = { [weak self] coordinate in
+            self?.locationHold.hold(coordinate)
+        }
+
+        dayPlanRunner.playLeg = { [weak self] path, speedKph in
+            self?.playPlanLeg(path: path, speedKph: speedKph)
+        }
+
+        dayPlanRunner.onFinished = { [weak self] in
+            self?.dayActivity = .stopped
+        }
+    }
+
+    /// Adds the pin currently on the map as the next stop.
+    func addDayStop() {
+        guard let point = mapScene.annotationEndpoints().first?.coordinate else {
+            showAlert("Drop a pin on the map first")
+            return
+        }
+
+        // The previous last stop needs a departure time now that something follows it.
+        if !dayPlan.stops.isEmpty, dayPlan.stops[dayPlan.stops.count - 1].departureMinutes == nil {
+            dayPlan.stops[dayPlan.stops.count - 1].departureMinutes = defaultDeparture()
+        }
+
+        dayPlan.stops.append(
+            DayPlanStop(
+                name: "Stop \(dayPlan.stops.count + 1)",
+                latitude: point.latitude,
+                longitude: point.longitude,
+                departureMinutes: nil
+            )
+        )
+
+        daySchedule = nil
+    }
+
+    func removeDayStop(at index: Int) {
+        guard dayPlan.stops.indices.contains(index) else { return }
+        dayPlan.stops.remove(at: index)
+        if var last = dayPlan.stops.last {
+            last.departureMinutes = nil
+            dayPlan.stops[dayPlan.stops.count - 1] = last
+        }
+        daySchedule = nil
+    }
+
+    func showDayStopOnMap(at index: Int) {
+        guard dayPlan.stops.indices.contains(index) else { return }
+        let stop = dayPlan.stops[index]
+        putLocationOnMap(location: Location(name: stop.name, latitude: stop.latitude, longitude: stop.longitude))
+    }
+
+    /// An hour after the previous departure, or the next round hour from now.
+    private func defaultDeparture() -> Int {
+        if let previous = dayPlan.stops.dropLast().last?.departureMinutes {
+            return min(previous + 60, 23 * 60 + 59)
+        }
+        let now = Calendar.current.dateComponents([.hour, .minute], from: Date())
+        return min(((now.hour ?? 8) + 1) * 60, 23 * 60 + 59)
+    }
+
+    /// Routes every leg and works out the timetable.
+    @MainActor
+    func buildDaySchedule() async {
+        guard dayPlan.stops.count >= 2 else {
+            daySchedule = DaySchedule(stops: dayPlan.stops, legs: [])
+            dayPlanStatus = dayPlan.stops.isEmpty ? "Add a stop to begin." : nil
+            return
+        }
+
+        dayPlanStatus = "Working out the day…"
+
+        var distances: [CLLocationDistance] = []
+        var paths: [[Coordinate]] = []
+
+        for index in 0..<(dayPlan.stops.count - 1) {
+            do {
+                let leg = try await RouteFinder.route(
+                    from: dayPlan.stops[index].coordinate,
+                    to: dayPlan.stops[index + 1].coordinate,
+                    transportType: transportType
+                )
+                distances.append(leg.distance)
+                paths.append(leg.path)
+            } catch {
+                dayPlanStatus = "Could not route \(dayPlan.stops[index].name) → \(dayPlan.stops[index + 1].name): \(error.localizedDescription)"
+                daySchedule = nil
+                return
+            }
+        }
+
+        let schedule = DaySchedule.build(plan: dayPlan, on: Date(), distances: distances, paths: paths)
+        daySchedule = schedule
+        dayPlanStatus = schedule.hasSlippedLegs
+            ? "Some legs cannot finish before the next departure — those departures have moved later."
+            : nil
+    }
+
+    func startDayPlan() {
+        guard let daySchedule else {
+            showAlert("Work out the day first")
+            return
+        }
+        stopRoutePlayback()
+        dayPlanRunner.start(daySchedule)
+    }
+
+    func stopDayPlan() {
+        dayPlanRunner.stop()
+        stopSimulation()
+    }
+
+    private func playPlanLeg(path: [Coordinate], speedKph: Double) {
+        // A leg is movement, not a held point: let go of the hold so the two are not
+        // both driving the device.
+        locationHold.release()
+
+        let url: URL
+        do {
+            url = try GPXRoute.write(
+                coordinates: path.map { $0.clCoordinate },
+                speed: max(speedKph, 1) / 3.6
+            )
+        } catch {
+            reportInjectionFailure(error)
+            return
+        }
+
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await self.runner.playRoute(
+                    gpxURL: url,
+                    connection: self.iosConnection,
+                    activityLabel: "Following the day plan",
                     showAlert: self.showAlert
                 )
             } catch {

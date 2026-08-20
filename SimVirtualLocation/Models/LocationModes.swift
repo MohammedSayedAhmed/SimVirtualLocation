@@ -28,6 +28,7 @@ enum TransportType: Int, Identifiable {
 enum PanelMode: Int, Identifiable, CaseIterable {
     case place
     case route
+    case day
 
     var id: Int { rawValue }
 }

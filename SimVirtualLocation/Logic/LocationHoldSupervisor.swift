@@ -65,22 +65,6 @@ final class LocationHoldSupervisor {
         }
     }
 
-    struct Coordinate: Equatable {
-        let latitude: Double
-        let longitude: Double
-
-        init(_ coordinate: CLLocationCoordinate2D) {
-            latitude = coordinate.latitude
-            longitude = coordinate.longitude
-        }
-
-        var clCoordinate: CLLocationCoordinate2D {
-            CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
-        }
-
-        var formatted: String { String(format: "%.6f, %.6f", latitude, longitude) }
-    }
-
     private(set) var state: State = .idle {
         didSet {
             guard state != oldValue else { return }

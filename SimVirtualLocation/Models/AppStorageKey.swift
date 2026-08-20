@@ -20,4 +20,7 @@ enum AppStorageKey {
 
     /// Stores `PanelMode.rawValue`.
     static let panelMode = "panel_mode"
+
+    /// The saved day plan, JSON-encoded.
+    static let dayPlan = "day_plan"
 }
