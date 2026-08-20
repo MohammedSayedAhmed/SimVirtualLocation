@@ -37,6 +37,7 @@ protocol DeviceLocationRunning: IOSProcessLaunching {
     func playRoute(
         gpxURL: URL,
         connection: IOSConnection,
+        activityLabel: String,
         showAlert: @escaping (String) -> Void
     ) async throws
 

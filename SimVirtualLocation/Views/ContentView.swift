@@ -62,12 +62,16 @@ struct ContentView: View {
 
                 ScrollView {
                     VStack(alignment: .leading, spacing: 8) {
-                        Picker("Device mode", selection: $locationController.platform) {
-                            Text("iOS").tag(AppPlatform.iOS)
-                            Text("Android").tag(AppPlatform.android)
+                        // Platform belongs with the rest of the target settings; it is
+                        // chosen once, so it only appears while those are open.
+                        if locationController.isTargetExpanded {
+                            Picker("Platform", selection: $locationController.platform) {
+                                Text("iOS").tag(AppPlatform.iOS)
+                                Text("Android").tag(AppPlatform.android)
+                            }
+                            .labelsHidden()
+                            .pickerStyle(.segmented)
                         }
-                        .labelsHidden()
-                        .pickerStyle(.segmented)
 
                         if locationController.platform == .iOS {
                             iOSPanel()
@@ -77,18 +81,12 @@ struct ContentView: View {
                                 .environmentObject(locationController)
                         }
                     }
-                    .frame(width: 250, alignment: .leading)
-                    .padding(EdgeInsets(top: 16, leading: 16, bottom: 16, trailing: 0))
+                    .frame(width: 308, alignment: .leading)
+                    .padding(16)
                 }
-                .frame(minWidth: 266, maxWidth: 266, maxHeight: .infinity)
-
-                LocationsView()
-                    .environmentObject(locationController)
-                    .frame(minWidth: 300, maxWidth: 300, maxHeight: .infinity)
-                    .padding(EdgeInsets(top: 16, leading: 16, bottom: 16, trailing: 16))
-
+                .frame(minWidth: 340, maxWidth: 340, maxHeight: .infinity)
             }
-            .frame(minWidth: 1100, minHeight: 280)
+            .frame(minWidth: 860, minHeight: 320)
             .frame(maxHeight: .infinity)
                 .onAppear {
                     locationController.updateMapRegion()
@@ -172,7 +170,7 @@ struct ContentView: View {
                 }
             }
         }
-        .frame(minWidth: 900, minHeight: 480)
+        .frame(minWidth: 900, minHeight: 560)
     }
 
     init(mapView: MapView, locationController: LocationController) {

@@ -20,3 +20,14 @@ enum TransportType: Int, Identifiable {
 
     var id: Int { rawValue }
 }
+
+/// Which half of the control panel is showing.
+///
+/// Placing a point and driving a route never overlap, and the controls for one are
+/// noise while you are doing the other — so the panel shows one at a time.
+enum PanelMode: Int, Identifiable, CaseIterable {
+    case place
+    case route
+
+    var id: Int { rawValue }
+}

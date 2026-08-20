@@ -35,6 +35,9 @@ class Runner {
     /// Partial stderr line carried between reads, since chunks split arbitrarily.
     private var playbackLogBuffer = ""
 
+    /// What the current `play` process is doing, in the user's terms.
+    private var playbackActivityLabel = "Route playing"
+
     // MARK: - Private Properties
 
     private let runnerQueue = DispatchQueue(label: "runnerQueue", qos: .background)
@@ -318,8 +321,13 @@ class Runner {
     func playRoute(
         gpxURL: URL,
         connection: IOSConnection,
+        activityLabel: String = "Route playing",
         showAlert: @escaping (String) -> Void
     ) async throws {
+        // A held point is played the same way a route is, so the label has to come from
+        // the caller — otherwise holding one spot reports itself as "Route playing".
+        self.playbackActivityLabel = activityLabel
+
         guard let connectionArguments = connection.arguments else {
             Task { @MainActor in
                 showAlert(connection.configurationHint)
@@ -384,7 +392,7 @@ class Runner {
 
                 if !announced {
                     announced = true
-                    self.onActivity?(.active("Route playing"))
+                    self.onActivity?(.active(self.playbackActivityLabel))
                 }
 
                 let parts = line[range.upperBound...].split(separator: " ")
@@ -453,7 +461,7 @@ class Runner {
     func resumeRoutePlayback() -> Bool {
         guard let task = routePlaybackTask, task.isRunning else { return false }
         guard kill(task.processIdentifier, SIGCONT) == 0 else { return false }
-        onActivity?(.active("Route playing"))
+        onActivity?(.active(playbackActivityLabel))
         return true
     }
 

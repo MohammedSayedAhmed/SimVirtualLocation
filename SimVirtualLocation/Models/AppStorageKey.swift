@@ -17,4 +17,7 @@ enum AppStorageKey {
     static let isHolding = "is_holding"
     static let heldLatitude = "held_latitude"
     static let heldLongitude = "held_longitude"
+
+    /// Stores `PanelMode.rawValue`.
+    static let panelMode = "panel_mode"
 }
