@@ -176,7 +176,15 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
 
         runner.onLocationPlayed = { [weak self] latitude, longitude in
             DispatchQueue.main.async {
-                guard let self = self, self.isPlayingRoute else { return }
+                guard let self = self else { return }
+
+                // A stationary hold is played the same way a route is, so every point
+                // `play` reports is the device confirming the held point is still on.
+                guard self.isPlayingRoute else {
+                    self.locationHold.confirmApplied()
+                    return
+                }
+
                 let coordinate = CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
                 self.playbackIndex += 1
                 self.mapScene.removeSimulationAnnotationFromMap()
@@ -196,11 +204,12 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
             }
         }
 
-        // The point does not outlive its session for long, so put it back as soon as
-        // the session goes away instead of waiting for the next keep-alive tick.
+        // A `set` session ending means the device has given the point back. Only the
+        // simulator/Android paths use `set` now, but the signal still matters there.
         runner.onSessionEnded = { [weak self] reason in
             DispatchQueue.main.async {
-                self?.locationHold.sessionEnded(reason: reason)
+                guard let self, !self.usesPlaybackHold else { return }
+                self.locationHold.sessionEnded(reason: reason)
             }
         }
 
@@ -974,7 +983,15 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
         locationHold.interval = keepAliveInterval
 
         locationHold.apply = { [weak self] coordinate in
-            self?.run(location: coordinate)
+            self?.applyHeldLocation(coordinate)
+        }
+
+        // The timer only has to restart a session that has ended. A session that is
+        // still up already holds the point, and replacing it is what made the device
+        // ping-pong between the held point and real GPS.
+        locationHold.isSessionAlive = { [weak self] in
+            guard let self, self.usesPlaybackHold else { return false }
+            return self.runner.isPlaybackRunning
         }
 
         locationHold.log = { [weak self] message in
@@ -1001,6 +1018,48 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
 
         NSSound.beep()
         _ = NSApplication.shared.requestUserAttention(.criticalRequest)
+    }
+
+    /// `true` when the target can hold a point with a long-lived `simulate-location play`
+    /// session. Simulator and Android have no session to keep open and are re-applied on
+    /// the timer instead.
+    private var usesPlaybackHold: Bool {
+        platform == .iOS && deviceMode == .device && useRSD
+    }
+
+    /// Applies the held point using whichever mechanism actually keeps it applied.
+    ///
+    /// On a real device that means one `simulate-location play` process walking a file of
+    /// identical points: the DVT session stays open for as long as it runs, so the point
+    /// is never handed back. `simulate-location set` cannot do this — the device reverts
+    /// the moment that process exits, so re-running it just alternates between the held
+    /// point and real GPS.
+    private func applyHeldLocation(_ coordinate: CLLocationCoordinate2D) {
+        guard usesPlaybackHold else {
+            run(location: coordinate)
+            return
+        }
+
+        let gpxURL: URL
+        do {
+            gpxURL = try GPXRoute.writeStationary(coordinate: coordinate)
+        } catch {
+            reportInjectionFailure(error)
+            return
+        }
+
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await self.runner.playRoute(
+                    gpxURL: gpxURL,
+                    connection: self.iosConnection,
+                    showAlert: self.showAlert
+                )
+            } catch {
+                self.reportInjectionFailure(error)
+            }
+        }
     }
 
     /// Applies `coordinate` and keeps it applied, rather than setting it once.

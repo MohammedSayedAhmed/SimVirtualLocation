@@ -4,14 +4,16 @@ import Foundation
 
 /// Keeps a single simulated point applied for as long as the user asked for it.
 ///
-/// `simulate-location set` parks in `wait_return()` and holds a DVT channel open, and the
-/// point outlives that channel — but only for a grace period, after which the device goes
-/// back to its real GPS. Nothing re-applied it, so a point set before a drive could
-/// silently lapse partway through while the app still looked like it was simulating.
+/// A simulated point lives exactly as long as the DVT session that set it. `simulate-location
+/// set` gives the point back the moment its process exits, which is why setting once lapses
+/// silently — and why re-running it on a timer is worse still: tearing down the old session
+/// hands the point back, and the device visibly bounces between the held point and real GPS
+/// while the replacement connects.
 ///
-/// This re-applies the held point on a timer, and immediately whenever the session that
-/// was holding it ends, so a lapse is measured in seconds rather than lasting until
-/// someone notices.
+/// So on a real device the hold is a single long-lived `simulate-location play` session over
+/// a file of identical points. The channel stays open, the point is never handed back, and
+/// this timer only has to notice that the session died and start a new one. Targets with no
+/// session to keep open — simulator, Android — are re-applied on the timer instead.
 ///
 /// All members are main-thread only.
 final class LocationHoldSupervisor {
@@ -29,6 +31,10 @@ final class LocationHoldSupervisor {
 
     /// Applies a coordinate to the currently selected target.
     var apply: ((CLLocationCoordinate2D) -> Void)?
+
+    /// Whether the session holding the point is still up. When it is, the point is
+    /// already applied and replacing it would only hand it back.
+    var isSessionAlive: (() -> Bool)?
 
     var onStateChange: ((State) -> Void)?
     var log: ((String) -> Void)?
@@ -70,7 +76,7 @@ final class LocationHoldSupervisor {
         didSet {
             guard isEnabled != oldValue else { return }
             restartTimer()
-            if isEnabled { reapply(trigger: .manual) }
+            if isEnabled { reapply(trigger: .keepAlive) }
         }
     }
 
@@ -156,13 +162,16 @@ final class LocationHoldSupervisor {
     func reapply(trigger: Trigger) {
         guard let held, isEnabled else { return }
 
-        // Deliberately unconditional. A `simulate-location set` process parks in
-        // `wait_return()` and stays alive indefinitely, so "the process is running" is
-        // not evidence the device is still honouring the point — which is exactly the
-        // case where the location lapsed with nothing in the UI changing. Re-applying
-        // costs one short-lived child process; the old session is retired only after
-        // the new one is up, so the point is never handed back in between.
-        log?("Re-applying \(held.formatted) (\(trigger.rawValue))")
+        // Replacing a session that is still holding the point is what made the device
+        // alternate between the held point and real GPS: tearing the old one down hands
+        // the point back, and the replacement needs a second or two to take it again.
+        // A live session already *is* the hold, so leave it running.
+        if trigger == .keepAlive, isSessionAlive?() == true {
+            state = .held(held, confirmedAt: Date())
+            return
+        }
+
+        log?("Applying \(held.formatted) (\(trigger.rawValue))")
         state = .applying(held)
         apply?(held.clCoordinate)
     }

@@ -26,10 +26,46 @@ enum GPXRoute {
     /// this is the granularity of the simulated movement.
     static let sampleInterval: TimeInterval = 1.0
 
+    /// How far apart the points of a stationary hold are timestamped. `play` sleeps for
+    /// the gap, so this is how often the point is re-asserted inside the session.
+    static let holdInterval: TimeInterval = 10
+
+    /// How long a stationary hold file covers before `play` runs out of points. The hold
+    /// is restarted when that happens, so this only sets how rarely that restart occurs.
+    static let holdDuration: TimeInterval = 12 * 60 * 60
+
+    /// Write a GPX that stands still at `coordinate`.
+    ///
+    /// A `simulate-location set` process owns the point only while it lives — when it goes
+    /// the device reverts to real GPS, which is why setting a point once, or setting it
+    /// over and over, both fail. `play` instead walks a file inside a single DVT session
+    /// that stays open, so a file full of the same point holds that point without ever
+    /// closing the channel.
+    static func writeStationary(
+        coordinate: CLLocationCoordinate2D,
+        interval: TimeInterval = holdInterval,
+        duration: TimeInterval = holdDuration
+    ) throws -> URL {
+        let count = max(2, Int(duration / max(interval, 1)))
+        return try write(
+            points: Array(repeating: coordinate, count: count),
+            interval: interval,
+            name: "stationary hold"
+        )
+    }
+
     /// Resample `coordinates` at a constant `speed` (metres per second) and write a GPX file
     /// into the temporary directory.
     static func write(coordinates: [CLLocationCoordinate2D], speed: CLLocationSpeed) throws -> URL {
         let points = resample(coordinates, speed: max(speed, 0.1))
+        return try write(points: points, interval: sampleInterval, name: "simulated route")
+    }
+
+    private static func write(
+        points: [CLLocationCoordinate2D],
+        interval: TimeInterval,
+        name: String
+    ) throws -> URL {
         guard !points.isEmpty else { throw Failure.emptyRoute }
 
         let formatter = ISO8601DateFormatter()
@@ -39,12 +75,12 @@ enum GPXRoute {
         var gpx = """
         <?xml version="1.0" encoding="UTF-8"?>
         <gpx version="1.1" creator="SimVirtualLocation" xmlns="http://www.topografix.com/GPX/1/1">
-          <trk><name>simulated route</name><trkseg>
+          <trk><name>\(name)</name><trkseg>
 
         """
 
         for (index, point) in points.enumerated() {
-            let stamp = formatter.string(from: start.addingTimeInterval(Double(index) * sampleInterval))
+            let stamp = formatter.string(from: start.addingTimeInterval(Double(index) * interval))
             gpx += "    <trkpt lat=\"\(point.latitude)\" lon=\"\(point.longitude)\"><time>\(stamp)</time></trkpt>\n"
         }
 
@@ -55,7 +91,7 @@ enum GPXRoute {
         """
 
         let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("simvirtuallocation-route-\(UUID().uuidString).gpx")
+            .appendingPathComponent("simvirtuallocation-\(UUID().uuidString).gpx")
 
         do {
             try gpx.write(to: url, atomically: true, encoding: .utf8)
