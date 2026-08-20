@@ -1196,6 +1196,16 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
             self?.playPlanLeg(path: path, speedKph: speedKph)
         }
 
+        // A leg with no session behind it is a device that has quietly stopped moving.
+        // A disconnected device counts as alive here on purpose: the reconnect path
+        // resumes the plan itself, and reporting "dead" meanwhile would have the runner
+        // restart a leg every two seconds against a phone that is not there.
+        dayPlanRunner.isLegSessionAlive = { [weak self] in
+            guard let self, self.usesPlaybackHold else { return true }
+            guard !self.selectedDevice.isEmpty else { return true }
+            return self.runner.isPlaybackRunning
+        }
+
         dayPlanRunner.onFinished = { [weak self] in
             self?.dayActivity = .stopped
         }
@@ -1292,7 +1302,9 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
             showAlert("Work out the day first")
             return
         }
-        stopRoutePlayback()
+        // Whatever is driving the device now is about to be wrong: the plan decides
+        // from the clock what should be happening, and issues it on its first tick.
+        runner.stopRoutePlayback()
         dayPlanRunner.start(daySchedule)
     }
 
