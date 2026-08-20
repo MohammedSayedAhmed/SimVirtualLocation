@@ -47,6 +47,16 @@ final class LocationHoldSupervisor {
         case applying(Coordinate)
         /// The last attempt failed; the device is on its real GPS until one succeeds.
         case failed(Coordinate, reason: String)
+
+        /// The point this state is about, if any.
+        var coordinate: Coordinate? {
+            switch self {
+            case .idle:
+                return nil
+            case .held(let point, _), .applying(let point), .failed(let point, _):
+                return point
+            }
+        }
     }
 
     struct Coordinate: Equatable {

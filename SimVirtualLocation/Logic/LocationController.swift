@@ -28,7 +28,14 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
     }
 
     @Published var transportType: TransportType = .driving
-    @Published var deviceMode: DeviceMode = .simulator
+    @Published var deviceMode: DeviceMode = .simulator {
+        didSet {
+            guard deviceMode != oldValue else { return }
+            Task { @MainActor [weak self] in
+                await self?.refreshDevices(silently: true)
+            }
+        }
+    }
     @Published var xcodePath: String = "/Applications/Xcode.app" {
         didSet { defaults.set(xcodePath, forKey: AppStorageKey.xcodePath) }
     }
@@ -79,6 +86,7 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
             guard panelMode != oldValue else { return }
             defaults.set(panelMode.rawValue, forKey: AppStorageKey.panelMode)
             pointsMode = panelMode == .place ? .single : .two
+            mapScene.isPlaceMode = panelMode == .place
         }
     }
 
@@ -280,9 +288,14 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
     /// - Parameter silently: when true this is a background rescan, so a failure is logged
     ///   rather than raised — a device being unplugged is not an error worth alarming about.
     func refreshDevices(silently: Bool) async {
-        bootedSimulators = (try? SimulatorDiscovery.fetchBootedSimulators(log: { [weak self] in self?.log($0) })) ?? []
-        if selectedSimulator.isEmpty || !bootedSimulators.contains(where: { $0.id == selectedSimulator }) {
-            selectedSimulator = bootedSimulators.first?.id ?? ""
+        // Only look for simulators when one is the target. Otherwise every rescan shelled
+        // out to `simctl` and logged its failure, which on a Mac without the simulator
+        // tools installed filled the log with an error nobody can act on.
+        if platform == .iOS, deviceMode == .simulator {
+            bootedSimulators = (try? SimulatorDiscovery.fetchBootedSimulators(log: { [weak self] in self?.log($0) })) ?? []
+            if selectedSimulator.isEmpty || !bootedSimulators.contains(where: { $0.id == selectedSimulator }) {
+                selectedSimulator = bootedSimulators.first?.id ?? ""
+            }
         }
 
         let previousSelection = selectedDevice
@@ -1020,7 +1033,13 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
             guard let self else { return }
             self.holdSummary = Self.describe(state)
             self.holdState = state
+            self.mapScene.setHeldCoordinate(state.coordinate?.clCoordinate)
             self.announceIfLost(state)
+        }
+
+        mapScene.isPlaceMode = panelMode == .place
+        mapScene.onSetLocationRequested = { [weak self] coordinate in
+            self?.holdLocation(coordinate)
         }
     }
 

@@ -13,6 +13,14 @@ struct ContentView: View {
     let mapView: MapView
     @ObservedObject var locationController: LocationController
 
+    /// The log is a developer record, and most of it is a note that something worked.
+    /// Default to the lines someone could act on.
+    @State private var problemsOnly = true
+
+    private var visibleLogs: [LogEntry] {
+        problemsOnly ? locationController.logs.filter { $0.isProblem } : locationController.logs
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             LocationHoldBanner()
@@ -112,10 +120,28 @@ struct ContentView: View {
                         .padding(.vertical, 4)
                     }
                     .buttonStyle(PlainButtonStyle())
-                    
+
+                    if !locationController.showLogs, let latest = locationController.logs.first {
+                        Divider().frame(height: 12)
+                        Text(latest.message)
+                            .font(.system(size: 11))
+                            .foregroundColor(latest.isProblem ? .red : .secondary)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
+
                     Spacer()
-                    
+
                     if locationController.showLogs {
+                        Picker("", selection: $problemsOnly) {
+                            Text("Problems").tag(true)
+                            Text("Everything").tag(false)
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.segmented)
+                        .frame(width: 160)
+                        .controlSize(.small)
+
                         Button("Copy logs") {
                             let log = locationController.logs.map { entry in
                                 let date = locationController.dateFormatter.string(from: entry.date)
@@ -146,7 +172,7 @@ struct ContentView: View {
                 if locationController.showLogs {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 1) {
-                            ForEach(locationController.logs) { log in
+                            ForEach(visibleLogs) { log in
                                 HStack(spacing: 8) {
                                     Text(locationController.dateFormatter.string(from: log.date))
                                         .padding(.vertical, 4)
