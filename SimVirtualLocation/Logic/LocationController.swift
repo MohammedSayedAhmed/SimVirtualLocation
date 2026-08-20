@@ -286,7 +286,9 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
             self.mapScene.handleMapClick(gesture, pointsMode: self.pointsMode)
         }
 
-        Task {
+        // @MainActor because everything below it is `@Published`: settling the stored
+        // settings at launch was writing them from whatever thread this Task landed on.
+        Task { @MainActor in
             await refreshDevices()
             startDeviceMonitoring()
 
@@ -310,27 +312,64 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
 
     /// - Parameter silently: when true this is a background rescan, so a failure is logged
     ///   rather than raised — a device being unplugged is not an error worth alarming about.
+    ///
+    /// Split deliberately in two. Both discovery calls shell out and block whatever thread
+    /// they are on, so they must not run on the main one; everything they produce is then
+    /// applied on the main thread, because publishing a change from here is what froze the
+    /// whole window. See `applyDiscovery` for why.
     func refreshDevices(silently: Bool) async {
         // Only look for simulators when one is the target. Otherwise every rescan shelled
         // out to `simctl` and logged its failure, which on a Mac without the simulator
         // tools installed filled the log with an error nobody can act on.
-        if platform == .iOS, deviceMode == .simulator {
-            bootedSimulators = (try? SimulatorDiscovery.fetchBootedSimulators(log: { [weak self] in self?.log($0) })) ?? []
-            if selectedSimulator.isEmpty || !bootedSimulators.contains(where: { $0.id == selectedSimulator }) {
-                selectedSimulator = bootedSimulators.first?.id ?? ""
+        let wantsSimulators = await MainActor.run { platform == .iOS && deviceMode == .simulator }
+
+        var simulators: [Simulator]?
+        if wantsSimulators {
+            simulators = (try? SimulatorDiscovery.fetchBootedSimulators(log: { [weak self] in self?.log($0) })) ?? []
+        }
+
+        let devices: [Device]?
+        do {
+            devices = try await IOSUSBDeviceDiscovery.fetchConnectedDevices(
+                runner: runner,
+                showAlert: { [weak self] in self?.showAlert($0) },
+                log: { [weak self] in self?.log($0) }
+            )
+        } catch {
+            devices = nil
+        }
+
+        await applyDiscovery(simulators: simulators, devices: devices, silently: silently)
+    }
+
+    /// Applies what a rescan found, on the main thread.
+    ///
+    /// This used to run wherever the rescan happened, which was a background thread, and
+    /// it both wrote `@Published` properties and called into `locationHold` and
+    /// `dayPlanRunner` — two objects whose members are main-thread only and whose timers
+    /// belong to the main run loop.
+    ///
+    /// The `@Published` writes were the worse half. SwiftUI holds a lock while it
+    /// publishes, and a background write can end up holding that lock while it waits for
+    /// the main thread, at the same moment the main thread is waiting for the lock. Both
+    /// stop, the window freezes, and nothing is logged because the log is published too.
+    /// Unplugging a device and plugging it back in ran this whole function, which is why
+    /// that was the way to hit it.
+    @MainActor
+    private func applyDiscovery(simulators: [Simulator]?, devices: [Device]?, silently: Bool) {
+        if let simulators {
+            bootedSimulators = simulators
+            if selectedSimulator.isEmpty || !simulators.contains(where: { $0.id == selectedSimulator }) {
+                selectedSimulator = simulators.first?.id ?? ""
             }
         }
 
         let previousSelection = selectedDevice
         let previousDevices = connectedDevices
 
-        do {
-            connectedDevices = try await IOSUSBDeviceDiscovery.fetchConnectedDevices(
-                runner: runner,
-                showAlert: { [weak self] in self?.showAlert($0) },
-                log: { [weak self] in self?.log($0) }
-            )
-        } catch {
+        if let devices {
+            connectedDevices = devices
+        } else {
             connectedDevices = []
             if !silently {
                 activity = .failed("Could not list devices — see Logs")
@@ -404,9 +443,11 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
             while !Task.isCancelled {
                 guard let self = self else { return }
 
-                let interval = self.connectedDevices.isEmpty
-                    ? Self.deviceScanIntervalWaiting
-                    : Self.deviceScanIntervalAttached
+                let interval = await MainActor.run {
+                    self.connectedDevices.isEmpty
+                        ? Self.deviceScanIntervalWaiting
+                        : Self.deviceScanIntervalAttached
+                }
 
                 try? await Task.sleep(nanoseconds: UInt64(interval * 1_000_000_000))
                 guard !Task.isCancelled else { return }
@@ -1555,8 +1596,31 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
         "\(xcodePath)\(iOSDeveloperImagePath)\(iOSVersion)\(iOSDeveloperImageSignature)"
     }
 
+    /// Records a line for the Logs pane.
+    ///
+    /// Called from process termination handlers, discovery, and the device monitor —
+    /// none of which are on the main thread — and `logs` is `@Published`, so writing it
+    /// where it is called from was one of the ways to wedge SwiftUI's publishing lock.
+    /// The timestamp is taken here rather than on arrival so a hop does not skew it.
     private func log(_ message: String) {
-        logs.insert(LogEntry(date: Date(), message: message), at: 0)
+        let entry = LogEntry(date: Date(), message: message)
+        Self.onMain { [weak self] in
+            self?.logs.insert(entry, at: 0)
+        }
+    }
+
+    /// Runs `work` on the main thread, straight away when already there.
+    ///
+    /// Every `@Published` write has to land on the main thread. SwiftUI takes a lock to
+    /// publish, and a write from a background thread can hold that lock while waiting for
+    /// main at the same moment main is waiting for the lock — which freezes the window
+    /// with no crash and nothing in the log to say so.
+    private static func onMain(_ work: @escaping () -> Void) {
+        if Thread.isMainThread {
+            work()
+        } else {
+            DispatchQueue.main.async(execute: work)
+        }
     }
     
     func clearLogs() {
