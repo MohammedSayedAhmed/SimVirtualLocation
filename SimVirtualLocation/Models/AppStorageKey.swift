@@ -12,4 +12,9 @@ enum AppStorageKey {
     static let useUserspace = "use_userspace_tunnel"
     static let keepLocationApplied = "keep_location_applied"
     static let keepAliveInterval = "keep_alive_interval"
+
+    /// The point being held, so a crash or a restart resumes it.
+    static let isHolding = "is_holding"
+    static let heldLatitude = "held_latitude"
+    static let heldLongitude = "held_longitude"
 }

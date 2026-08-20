@@ -11,6 +11,47 @@ Posibilities:
 
 You can dowload compiled and signed app [here](https://github.com/nexron171/SimVirtualLocation/releases).
 
+## Download this build
+
+Every push to `main` publishes a universal (Apple Silicon + Intel) build to the
+[latest release](../../releases/tag/latest).
+
+1. Download and unzip `SimVirtualLocation.zip`, and move the app to `/Applications`.
+2. The build is ad-hoc signed rather than notarized, so macOS quarantines it on
+   download. Clear that once:
+
+   ```shell
+   xattr -dr com.apple.quarantine /Applications/SimVirtualLocation.app
+   ```
+
+3. Open it normally from then on.
+
+For iOS devices you still need `pymobiledevice3` installed — see below.
+
+## Keeping a location applied
+
+A point set with **Set to A** / **Set to Coordinate** used to be applied once and never
+looked at again. `simulate-location set` holds a DVT channel open and the point outlives
+that channel, but only for a grace period — so a point set before a drive could quietly
+lapse back to real GPS while the app still looked like it was simulating.
+
+**Keep location applied** (on by default) re-applies the held point every 15 seconds, and
+immediately whenever the session holding it ends. The banner across the top of the window
+is driven only by confirmed injections:
+
+| Banner | Meaning |
+| --- | --- |
+| **Location held** (green) | The device confirmed the point, with the time it did so. |
+| **Applying location…** (amber) | An attempt is in flight. |
+| **LOCATION NOT SET** (red) | The last attempt failed — the device is on its real GPS. |
+
+Red also beeps and bounces the dock icon, since the Mac is usually not being watched. The
+held point is remembered across launches, and quitting while a point is held asks first.
+
+The device has the final say: an unplugged cable, a device reboot, or the Mac sleeping
+ends a hold and no host-side setting prevents that. The app re-establishes the point as
+soon as it can and never reports a hold it has not confirmed.
+
 ![App Screen Shot](https://raw.githubusercontent.com/nexron171/SimVirtualLocation/master/assets/screenshot.png)
 
 ## FAQ

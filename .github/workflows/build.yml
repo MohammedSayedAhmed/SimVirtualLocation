@@ -1,0 +1,74 @@
+name: Build
+
+# Compiles the app so type errors and broken call sites surface on the pull request
+# instead of the first time someone opens Xcode.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: xcodebuild (macOS)
+    runs-on: macos-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: xcodebuild -version
+
+      - name: Build
+        run: |
+          xcodebuild build \
+            -project SimVirtualLocation.xcodeproj \
+            -scheme SimVirtualLocation \
+            -configuration Release \
+            -destination 'platform=macOS' \
+            -derivedDataPath build \
+            ARCHS="arm64 x86_64" \
+            ONLY_ACTIVE_ARCH=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY= \
+            CODE_SIGN_ENTITLEMENTS=
+
+      - name: Ad-hoc sign
+        # macOS refuses to launch an unsigned binary on Apple Silicon, so the download
+        # has to carry at least an ad-hoc signature to be runnable at all.
+        run: |
+          APP=build/Build/Products/Release/SimVirtualLocation.app
+          codesign --force --deep --sign - "$APP"
+          codesign --verify --verbose "$APP"
+
+      - name: Package
+        run: |
+          ditto -c -k --keepParent \
+            build/Build/Products/Release/SimVirtualLocation.app \
+            SimVirtualLocation.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SimVirtualLocation
+          path: SimVirtualLocation.zip
+
+      - name: Publish rolling release
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view latest >/dev/null 2>&1 || \
+            gh release create latest \
+              --title "Latest build" \
+              --notes "Built from main. Unsigned and ad-hoc signed — see the README for how to open it the first time." \
+              --prerelease
+          gh release upload latest SimVirtualLocation.zip --clobber

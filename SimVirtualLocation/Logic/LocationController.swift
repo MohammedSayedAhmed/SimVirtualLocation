@@ -5,6 +5,7 @@
 //  Created by Sergey Shirnin on 21.02.2022.
 //
 
+import AppKit
 import Combine
 import CoreLocation
 import MapKit
@@ -67,6 +68,9 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
 
     /// One line describing the held point, or `nil` when nothing is being held.
     @Published private(set) var holdSummary: String?
+
+    /// Whether a point is applied, being applied, or has been lost.
+    @Published private(set) var holdState: LocationHoldSupervisor.State = .idle
 
     /// True while a simulation is suspended and can be resumed from the same point.
     @Published var isPaused = false
@@ -149,6 +153,7 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
     private var tracksTimes: [Track: Double] = [:]
 
     private var timer: Timer?
+    private var wasHoldLost = false
 
     @Published var savedLocations: [Location] = []
 
@@ -200,6 +205,11 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
         }
 
         configureLocationHold()
+
+        // After the rest of init, so device discovery and settings are already in place.
+        DispatchQueue.main.async { [weak self] in
+            self?.restoreHeldPointIfNeeded()
+        }
 
         runner.log = { [weak self] message in
             DispatchQueue.main.async {
@@ -557,6 +567,7 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
         isSimulating = false
         isPlayingRoute = false
         isPaused = false
+        persistHeldPoint(nil)
         locationHold.release()
         runner.stop()
     }
@@ -640,6 +651,7 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
     func reset() {
         mapScene.resetMapVisuals()
         clearRouteState()
+        persistHeldPoint(nil)
         locationHold.release()
 
         if platform == .iOS {
@@ -965,22 +977,68 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
             self?.run(location: coordinate)
         }
 
-        locationHold.isSessionAlive = { [weak self] in
-            guard let self, self.platform == .iOS, self.deviceMode == .device else { return false }
-            return self.runner.isLocationSessionAlive
-        }
-
         locationHold.log = { [weak self] message in
             self?.log(message)
         }
 
         locationHold.onStateChange = { [weak self] state in
-            self?.holdSummary = Self.describe(state)
+            guard let self else { return }
+            self.holdSummary = Self.describe(state)
+            self.holdState = state
+            self.announceIfLost(state)
         }
+    }
+
+    /// The Mac is usually not being watched while a point is held, so a lost hold has to
+    /// announce itself rather than sit quietly in a panel.
+    private func announceIfLost(_ state: LocationHoldSupervisor.State) {
+        guard case .failed = state else {
+            wasHoldLost = false
+            return
+        }
+        guard !wasHoldLost else { return }
+        wasHoldLost = true
+
+        NSSound.beep()
+        _ = NSApplication.shared.requestUserAttention(.criticalRequest)
     }
 
     /// Applies `coordinate` and keeps it applied, rather than setting it once.
     private func holdLocation(_ coordinate: CLLocationCoordinate2D) {
+        persistHeldPoint(coordinate)
+        locationHold.hold(coordinate)
+    }
+
+    /// Remembers the held point so a crash, a forced quit, or a Mac restart resumes it on
+    /// the next launch instead of leaving the device on real GPS with nobody watching.
+    private func persistHeldPoint(_ coordinate: CLLocationCoordinate2D?) {
+        guard let coordinate else {
+            defaults.set(false, forKey: AppStorageKey.isHolding)
+            return
+        }
+        defaults.set(coordinate.latitude, forKey: AppStorageKey.heldLatitude)
+        defaults.set(coordinate.longitude, forKey: AppStorageKey.heldLongitude)
+        defaults.set(true, forKey: AppStorageKey.isHolding)
+    }
+
+    private func restoreHeldPointIfNeeded() {
+        guard defaults.bool(forKey: AppStorageKey.isHolding) else { return }
+
+        let latitude = defaults.double(forKey: AppStorageKey.heldLatitude)
+        let longitude = defaults.double(forKey: AppStorageKey.heldLongitude)
+
+        guard CoordinateParsing.isValid(latitude: latitude, longitude: longitude),
+              !(latitude == 0 && longitude == 0) else {
+            defaults.set(false, forKey: AppStorageKey.isHolding)
+            return
+        }
+
+        log("Resuming the location hold left over from the previous run")
+
+        let coordinate = CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
+        if pointsMode == .single {
+            putLocationOnMap(location: Location(name: "", latitude: latitude, longitude: longitude))
+        }
         locationHold.hold(coordinate)
     }
 

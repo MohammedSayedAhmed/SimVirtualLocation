@@ -15,6 +15,9 @@ struct ContentView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            LocationHoldBanner()
+                .environmentObject(locationController)
+
             HStack(alignment: .top, spacing: 0) {
                 ZStack(alignment: .bottomTrailing) {
                     mapView

@@ -24,14 +24,11 @@ final class LocationHoldSupervisor {
         case manual = "manual re-apply"
     }
 
-    static let defaultInterval: TimeInterval = 30
+    static let defaultInterval: TimeInterval = 15
     static let intervalRange: ClosedRange<TimeInterval> = 5...600
 
     /// Applies a coordinate to the currently selected target.
     var apply: ((CLLocationCoordinate2D) -> Void)?
-
-    /// Whether a long-lived session is still holding the point open.
-    var isSessionAlive: (() -> Bool)?
 
     var onStateChange: ((State) -> Void)?
     var log: ((String) -> Void)?
@@ -159,13 +156,12 @@ final class LocationHoldSupervisor {
     func reapply(trigger: Trigger) {
         guard let held, isEnabled else { return }
 
-        // A live session is still holding the point; relaunching would only close the
-        // channel that is currently keeping it applied.
-        if trigger == .keepAlive, isSessionAlive?() == true {
-            state = .held(held, confirmedAt: Date())
-            return
-        }
-
+        // Deliberately unconditional. A `simulate-location set` process parks in
+        // `wait_return()` and stays alive indefinitely, so "the process is running" is
+        // not evidence the device is still honouring the point — which is exactly the
+        // case where the location lapsed with nothing in the UI changing. Re-applying
+        // costs one short-lived child process; the old session is retired only after
+        // the new one is up, so the point is never handed back in between.
         log?("Re-applying \(held.formatted) (\(trigger.rawValue))")
         state = .applying(held)
         apply?(held.clCoordinate)
