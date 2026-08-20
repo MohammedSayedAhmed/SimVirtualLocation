@@ -24,6 +24,11 @@ struct LocationSettingsPanel: View {
                     Text("Two").tag(PointsMode.two)
                 }.pickerStyle(.segmented)
 
+                Picker("Transport type", selection: $locationController.transportType) {
+                    Text("Driving").tag(TransportType.driving)
+                    Text("Walking").tag(TransportType.walking)
+                }.pickerStyle(.segmented)
+
                 Button(action: {
                     locationController.setCurrentLocation()
                 }, label: {
@@ -97,6 +102,14 @@ struct LocationSettingsPanel: View {
                 })
 
                 Button(action: {
+                    locationController.togglePauseSimulation()
+                }, label: {
+                    Text(locationController.isPaused ? "Resume simulation" : "Pause simulation")
+                        .frame(maxWidth: .infinity)
+                })
+                .disabled(!locationController.isSimulating)
+
+                Button(action: {
                     locationController.stopSimulation()
                 }, label: {
                     Text("Stop simulation").frame(maxWidth: .infinity)
@@ -107,33 +120,71 @@ struct LocationSettingsPanel: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Toggle("Keep location applied", isOn: $locationController.isKeepAliveEnabled)
 
-                    Text("Re-applies the point on a timer and verifies every attempt. Without it a dropped USB session, a restarted iOS 17+ tunnel, or a simulator reboot silently returns the device to real GPS.")
+                    Text("A set point is released by the device a short while after its session ends. Re-applying keeps it in place instead of quietly returning to real GPS.")
                         .font(.system(size: 10))
                         .foregroundColor(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
 
                     if locationController.isKeepAliveEnabled {
                         Picker("Re-apply every", selection: $locationController.keepAliveInterval) {
-                            Text("2s").tag(2.0)
                             Text("5s").tag(5.0)
-                            Text("10s").tag(10.0)
                             Text("15s").tag(15.0)
                             Text("30s").tag(30.0)
+                            Text("60s").tag(60.0)
                         }
                         .pickerStyle(.segmented)
+                    }
+
+                    if let summary = locationController.holdSummary {
+                        HStack(spacing: 6) {
+                            Text(summary)
+                                .font(.system(size: 10))
+                                .foregroundColor(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+
+                            Spacer(minLength: 4)
+
+                            Button("Re-apply") {
+                                locationController.reapplyHeldLocation()
+                            }
+                            .font(.system(size: 10))
+                        }
                     }
                 }
             }
 
             GroupBox {
                 VStack(alignment: .leading) {
-                    Slider(value: $locationController.speed, in: 5...200, step: 5) {
+                    Slider(
+                        value: $locationController.speed,
+                        in: LocationController.minimumSpeed...LocationController.maximumSpeed,
+                        step: 5
+                    ) {
                         Text("Speed")
                     }
                     Text("\(Int(locationController.speed.rounded(.up))) km/h")
+
+                    if let summary = locationController.routeSummary {
+                        Text(summary)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    HStack {
+                        Text("Arrive in")
+                        TextField("min", text: $locationController.targetDurationMinutes)
+                            .frame(width: 56)
+                        Text("min")
+                        Spacer()
+                        Button("Set speed") {
+                            locationController.applyTargetDuration()
+                        }
+                    }
+                    .disabled(locationController.routeDistance == 0)
                 }
             }
-
+            
             GroupBox {
                 if locationController.useRSD {
                     Picker("Location update frequency", selection: $locationController.timeScale) {

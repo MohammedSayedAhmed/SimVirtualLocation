@@ -14,102 +14,103 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
 
     // MARK: - Publishers
 
-    /// `true` while a route (or A→B) playback is running.
     @Published var isSimulating = false
-
-    /// What the app can actually promise about the simulated location right now.
-    @Published var holdStatus: LocationHoldStatus = .idle
-
-    @Published var speed: Double = 60.0
-    @Published var pointsMode: PointsMode = .single {
-        didSet { mapScene.handlePointsModeChange(to: pointsMode) }
+    @Published var speed: Double = 60.0 {
+        didSet { scheduleSpeedChange() }
     }
-    @Published var deviceMode: DeviceMode = .simulator {
+    @Published var pointsMode: PointsMode = .single {
         didSet {
-            guard deviceMode != oldValue else { return }
-            defaults.set(deviceMode.rawValue, forKey: AppStorageKey.deviceMode)
-            // Deliberately does not stop the old session first: the runner retires it
-            // only once the new target has accepted the point, so switching targets
-            // never opens a window on real GPS.
-            locationHold.reapplyNow(trigger: .settingsChanged)
+            mapScene.handlePointsModeChange(to: pointsMode)
+            if pointsMode == .single {
+                clearRouteState()
+            }
         }
     }
+
+    @Published var transportType: TransportType = .driving
+    @Published var deviceMode: DeviceMode = .simulator
     @Published var xcodePath: String = "/Applications/Xcode.app" {
         didSet { defaults.set(xcodePath, forKey: AppStorageKey.xcodePath) }
     }
 
-    @Published var useRSD: Bool = false {
-        didSet {
-            guard useRSD != oldValue else { return }
-            defaults.set(useRSD, forKey: AppStorageKey.useRSD)
-            discoveredRSD = nil
-            lastRSDDiscoveryAt = nil
-            locationHold.reapplyNow(trigger: .settingsChanged)
-        }
+    @Published var useRSD: Bool = true
+
+    /// Establish the iOS 17+ tunnel in-process instead of relying on a tunnel the user starts
+    /// with `sudo` in Terminal. Removes the need for RSD Address / RSD Port entirely.
+    @Published var useUserspace: Bool = true {
+        didSet { defaults.set(useUserspace, forKey: AppStorageKey.useUserspace) }
     }
 
-    @Published var bootedSimulators: [Simulator] = []
-    @Published var selectedSimulator: String = "" {
-        didSet { defaults.set(selectedSimulator, forKey: AppStorageKey.selectedSimulator) }
-    }
+    /// True while an entire route is being replayed by a single `simulate-location play`
+    /// process, in which case `performMovement` animates the map but must not also push
+    /// locations itself.
+    private var isPlayingRoute = false
 
-    @Published var connectedDevices: [Device] = []
-    @Published var selectedDevice: String = "" {
-        didSet { defaults.set(selectedDevice, forKey: AppStorageKey.selectedDevice) }
-    }
+    /// Progress of the current device operation, shown next to the device picker.
+    @Published var activity: DeviceActivity = .idle
 
-    @Published var showingAlert: Bool = false
-    @Published var platform: AppPlatform = .iOS {
-        didSet {
-            guard platform != oldValue else { return }
-            defaults.set(platform.rawValue, forKey: AppStorageKey.platform)
-            locationHold.reapplyNow(trigger: .settingsChanged)
-        }
-    }
-    @Published var adbPath: String = "" {
-        didSet { defaults.set(adbPath, forKey: AppStorageKey.adbPath) }
-    }
-    @Published var adbDeviceId: String = "" {
-        didSet { defaults.set(adbDeviceId, forKey: AppStorageKey.adbDeviceId) }
-    }
-    @Published var isEmulator: Bool = false {
-        didSet { defaults.set(isEmulator, forKey: AppStorageKey.isEmulator) }
-    }
-
-    @Published var rsdAddress: String = "" {
-        didSet { defaults.set(rsdAddress, forKey: AppStorageKey.rsdAddress) }
-    }
-    @Published var rsdPort: String = "" {
-        didSet { defaults.set(rsdPort, forKey: AppStorageKey.rsdPort) }
-    }
-
-    /// Picks the current RSD address/port up from `pymobiledevice3 remote tunneld`,
-    /// so an iOS 17+ tunnel that restarts does not strand the device on real GPS.
-    @Published var autoDiscoverRSD: Bool = true {
-        didSet {
-            guard autoDiscoverRSD != oldValue else { return }
-            defaults.set(autoDiscoverRSD, forKey: AppStorageKey.autoDiscoverRSD)
-            discoveredRSD = nil
-            lastRSDDiscoveryAt = nil
-        }
-    }
-
-    /// Re-applies the held point on a timer so it cannot quietly revert to real GPS.
+    /// Re-apply a single set point periodically so it cannot lapse back to real GPS.
     @Published var isKeepAliveEnabled: Bool = true {
         didSet {
             guard isKeepAliveEnabled != oldValue else { return }
-            defaults.set(isKeepAliveEnabled, forKey: AppStorageKey.keepAliveEnabled)
-            locationHold.isKeepAliveEnabled = isKeepAliveEnabled
+            defaults.set(isKeepAliveEnabled, forKey: AppStorageKey.keepLocationApplied)
+            locationHold.isEnabled = isKeepAliveEnabled
         }
     }
 
-    @Published var keepAliveInterval: Double = LocationHoldSupervisor.defaultKeepAliveInterval {
+    @Published var keepAliveInterval: Double = LocationHoldSupervisor.defaultInterval {
         didSet {
             guard keepAliveInterval != oldValue else { return }
             defaults.set(keepAliveInterval, forKey: AppStorageKey.keepAliveInterval)
-            locationHold.keepAliveInterval = keepAliveInterval
+            locationHold.interval = keepAliveInterval
         }
     }
+
+    /// One line describing the held point, or `nil` when nothing is being held.
+    @Published private(set) var holdSummary: String?
+
+    /// Whether a point is applied, being applied, or has been lost.
+    @Published private(set) var holdState: LocationHoldSupervisor.State = .idle
+
+    /// True while a simulation is suspended and can be resumed from the same point.
+    @Published var isPaused = false
+
+    /// Length of the route currently loaded, in metres. Zero when none is loaded.
+    @Published private(set) var routeDistance: CLLocationDistance = 0
+
+    /// Journey time the user wants, in minutes. Applying it derives the speed.
+    @Published var targetDurationMinutes: String = ""
+
+    /// Route being played, and how much of it the device has already covered. Used to
+    /// rebuild the remainder when the speed changes mid-route.
+    private var playbackCoordinates: [CLLocationCoordinate2D] = []
+    private var playbackIndex = 0
+    private var speedChangeWork: DispatchWorkItem?
+
+    /// How often connected devices are rescanned. Scanning shells out to pymobiledevice3,
+    /// so poll briskly only while waiting for a device to appear and back off once one is
+    /// attached, where the scan exists just to notice a disconnect.
+    private static let deviceScanIntervalWaiting: TimeInterval = 3
+    private static let deviceScanIntervalAttached: TimeInterval = 15
+
+    private var deviceMonitorTask: Task<Void, Never>?
+
+    @Published var bootedSimulators: [Simulator] = []
+    @Published var selectedSimulator: String = ""
+
+    @Published var connectedDevices: [Device] = []
+    @Published var selectedDevice: String = ""
+
+    @Published var showingAlert: Bool = false
+    @Published var platform: AppPlatform = .iOS {
+        didSet { defaults.set(platform.rawValue, forKey: AppStorageKey.platform) }
+    }
+    @Published var adbPath: String = ""
+    @Published var adbDeviceId: String = ""
+    @Published var isEmulator: Bool = false
+
+    @Published var rsdAddress: String = ""
+    @Published var rsdPort: String = ""
 
     @Published var timeScale: Double = 1.5 {
         didSet { runner.timeDelay = timeScale }
@@ -133,17 +134,11 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
 
     // MARK: - Private
 
-    /// Keeps the log from growing without bound during a long drive.
-    private static let maxLogEntries = 500
-
-    /// Don't re-list booted simulators more often than this while injecting.
-    private static let simulatorRefreshCooldown: TimeInterval = 4
-
     private let mapView: MapView
     private let mapScene: MapSceneCoordinator
     private let runner: DeviceLocationRunning
-    private let savedLocationsStore: SavedLocationsStore
     private let locationHold = LocationHoldSupervisor()
+    private let savedLocationsStore: SavedLocationsStore
     private let locationManager = CLLocationManager()
     private let defaults: UserDefaults = UserDefaults.standard
     private let iOSDeveloperImagePath = "/Contents/Developer/Platforms/iPhoneOS.platform/DeviceSupport/"
@@ -156,21 +151,9 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
     private var currentTrackIndex: Int = 0
     private var lastTrackLocation: CLLocationCoordinate2D?
     private var tracksTimes: [Track: Double] = [:]
-    private var isRouteInjectionInFlight = false
 
     private var timer: Timer?
-
-    private var lastSimulatorRefreshAt: Date?
-    private var lastSimulatorListError: String?
-    private var discoveredRSD: TunneldDiscovery.Endpoint?
-    private var lastRSDDiscoveryAt: Date?
-    private var lastAlertText: String?
-    private var lastAlertAt: Date?
-    private var lastNotifiedSeverity: LocationHoldStatus.Severity = .neutral
-    private var lastNotifiedAt: Date?
-
-    /// Minimum spacing between "something is wrong" alerts at warning level.
-    private static let attentionCooldown: TimeInterval = 20
+    private var wasHoldLost = false
 
     @Published var savedLocations: [Location] = []
 
@@ -187,12 +170,52 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
         self.savedLocationsStore = savedLocationsStore
         super.init()
 
-        runner.log = { [weak self] message in
-            self?.log(message)
+        if defaults.object(forKey: AppStorageKey.useUserspace) != nil {
+            useUserspace = defaults.bool(forKey: AppStorageKey.useUserspace)
         }
 
-        restoreSettings()
+        runner.onLocationPlayed = { [weak self] latitude, longitude in
+            DispatchQueue.main.async {
+                guard let self = self, self.isPlayingRoute else { return }
+                let coordinate = CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
+                self.playbackIndex += 1
+                self.mapScene.removeSimulationAnnotationFromMap()
+                self.mapScene.placeSimulationAnnotation(at: coordinate)
+            }
+        }
+
+        runner.onActivity = { [weak self] activity in
+            DispatchQueue.main.async {
+                self?.activity = activity
+            }
+        }
+
+        runner.onLocationConfirmed = { [weak self] in
+            DispatchQueue.main.async {
+                self?.locationHold.confirmApplied()
+            }
+        }
+
+        // The point does not outlive its session for long, so put it back as soon as
+        // the session goes away instead of waiting for the next keep-alive tick.
+        runner.onSessionEnded = { [weak self] reason in
+            DispatchQueue.main.async {
+                self?.locationHold.sessionEnded(reason: reason)
+            }
+        }
+
         configureLocationHold()
+
+        // After the rest of init, so device discovery and settings are already in place.
+        DispatchQueue.main.async { [weak self] in
+            self?.restoreHeldPointIfNeeded()
+        }
+
+        runner.log = { [weak self] message in
+            DispatchQueue.main.async {
+                self?.log(message)
+            }
+        }
 
         locationManager.delegate = self
         locationManager.desiredAccuracy = kCLLocationAccuracyBest
@@ -205,99 +228,118 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
             self.mapScene.handleMapClick(gesture, pointsMode: self.pointsMode)
         }
 
-        Task { @MainActor [weak self] in
-            await self?.refreshDevices()
-            self?.restoreHoldIfNeeded()
+        Task {
+            await refreshDevices()
+            startDeviceMonitoring()
+
+            if let p = AppPlatform(rawValue: defaults.integer(forKey: AppStorageKey.platform)) {
+                platform = p
+            }
+            adbPath = defaults.string(forKey: AppStorageKey.adbPath) ?? ""
+            adbDeviceId = defaults.string(forKey: AppStorageKey.adbDeviceId) ?? ""
+            isEmulator = defaults.bool(forKey: AppStorageKey.isEmulator)
+            xcodePath = defaults.string(forKey: AppStorageKey.xcodePath) ?? "/Applications/Xcode.app"
+
+            savedLocations = savedLocationsStore.load()
         }
     }
 
     // MARK: - Public
 
-    @MainActor
-    func refreshDevices(announceProblems: Bool = true) async {
-        await refreshSimulators()
-        await refreshConnectedDevices(announceProblems: announceProblems)
+    func refreshDevices() async {
+        await refreshDevices(silently: false)
     }
 
-    @MainActor
-    private func refreshSimulators() async {
-        lastSimulatorRefreshAt = Date()
-
-        let previousSimulator = selectedSimulator
-        let logSink: (String) -> Void = { [weak self] message in self?.log(message) }
-
-        do {
-            // `simctl` is a blocking child process; running it inline would freeze the
-            // window every time the keep-alive re-checks which simulators are booted.
-            let simulators = try await Task.detached(priority: .userInitiated) {
-                try SimulatorDiscovery.fetchBootedSimulators(log: logSink)
-            }.value
-
-            // Assign only on change: this runs on every keep-alive tick, and a
-            // `@Published` write would redraw the whole panel each time.
-            if bootedSimulators != simulators {
-                bootedSimulators = simulators
-            }
-            lastSimulatorListError = nil
-        } catch {
-            if !bootedSimulators.isEmpty {
-                bootedSimulators = []
-            }
-            // This runs on every tick; logging an unchanged error each time would
-            // bury everything else.
-            let description = "\(error)"
-            if lastSimulatorListError != description {
-                lastSimulatorListError = description
-                log("Could not list booted simulators: \(description)")
-            }
-        }
-
-        // A refresh must never silently retarget a different simulator: that used to
-        // send updates to a device the user was not looking at.
-        if bootedSimulators.contains(where: { $0.id == previousSimulator }) {
-            if selectedSimulator != previousSimulator {
-                selectedSimulator = previousSimulator
-            }
-        } else {
-            if !previousSimulator.isEmpty {
-                log("Previously selected simulator \(previousSimulator) is no longer booted")
-            }
+    /// - Parameter silently: when true this is a background rescan, so a failure is logged
+    ///   rather than raised — a device being unplugged is not an error worth alarming about.
+    func refreshDevices(silently: Bool) async {
+        bootedSimulators = (try? SimulatorDiscovery.fetchBootedSimulators(log: { [weak self] in self?.log($0) })) ?? []
+        if selectedSimulator.isEmpty || !bootedSimulators.contains(where: { $0.id == selectedSimulator }) {
             selectedSimulator = bootedSimulators.first?.id ?? ""
         }
-    }
 
-    @MainActor
-    private func refreshConnectedDevices(announceProblems: Bool) async {
-        let previousDevice = selectedDevice
+        let previousSelection = selectedDevice
+        let previousDevices = connectedDevices
 
         do {
-            let devices = try await IOSUSBDeviceDiscovery.fetchConnectedDevices(
+            connectedDevices = try await IOSUSBDeviceDiscovery.fetchConnectedDevices(
                 runner: runner,
-                showAlert: { [weak self] message in
-                    guard announceProblems else { return }
-                    self?.showAlert(message)
-                },
+                showAlert: { [weak self] in self?.showAlert($0) },
                 log: { [weak self] in self?.log($0) }
             )
-            if connectedDevices != devices {
-                connectedDevices = devices
-            }
         } catch {
-            if !connectedDevices.isEmpty {
-                connectedDevices = []
+            connectedDevices = []
+            if !silently {
+                activity = .failed("Could not list devices — see Logs")
             }
-            log("Could not list connected iOS devices: \(error.localizedDescription)")
         }
 
-        if connectedDevices.contains(where: { $0.id == previousDevice }) {
-            if selectedDevice != previousDevice {
-                selectedDevice = previousDevice
-            }
+        // Keep the user's choice as long as that device is still attached.
+        if connectedDevices.contains(where: { $0.id == previousSelection }) {
+            selectedDevice = previousSelection
         } else {
-            if !previousDevice.isEmpty {
-                log("Previously selected device \(previousDevice) is no longer connected")
-            }
             selectedDevice = connectedDevices.first?.id ?? ""
+        }
+
+        let changed = connectedDevices != previousDevices
+
+        if connectedDevices.isEmpty {
+            if changed, !previousDevices.isEmpty {
+                handleDeviceDisconnected()
+            } else if activity == .idle {
+                activity = .working("Waiting for a device…")
+            }
+            return
+        }
+
+        guard changed else { return }
+
+        if previousDevices.isEmpty {
+            activity = .active("Device connected")
+        } else {
+            activity = .idle
+        }
+        log("connected devices: \(connectedDevices.map { $0.name }.joined(separator: ", "))")
+    }
+
+    /// The device went away mid-session.
+    ///
+    /// iOS drops the simulated location as soon as the tunnel dies, so the phone is already
+    /// back on real GPS. Say so rather than leaving a stale "Location set" on screen, and
+    /// suspend any route instead of resuming it silently — re-spoofing a location the user
+    /// is no longer watching is worse than making them press Resume.
+    private func handleDeviceDisconnected() {
+        log("device disconnected")
+
+        guard isSimulating else {
+            activity = .failed("Device disconnected — location no longer simulated")
+            return
+        }
+
+        runner.stopRoutePlayback()
+        timer?.invalidate()
+        timer = nil
+        isPaused = true
+        activity = .failed("Device disconnected — simulation paused")
+    }
+
+    /// Rescan for devices on a timer so connecting a phone is noticed without the user
+    /// having to ask. Cancelled and restarted rather than left to stack up.
+    private func startDeviceMonitoring() {
+        deviceMonitorTask?.cancel()
+        deviceMonitorTask = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self = self else { return }
+
+                let interval = self.connectedDevices.isEmpty
+                    ? Self.deviceScanIntervalWaiting
+                    : Self.deviceScanIntervalAttached
+
+                try? await Task.sleep(nanoseconds: UInt64(interval * 1_000_000_000))
+                guard !Task.isCancelled else { return }
+
+                await self.refreshDevices(silently: true)
+            }
         }
     }
 
@@ -306,11 +348,7 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
             showAlert("Current location is unavailable")
             return
         }
-        if pointsMode == .single {
-            // Show where the hold actually is; in two-point mode this would eat a slot.
-            putLocationOnMap(location: Location(name: "", latitude: location.latitude, longitude: location.longitude))
-        }
-        hold(location)
+        holdLocation(location)
     }
 
     func setSelectedLocation(toBPoint: Bool = false) {
@@ -320,19 +358,85 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
                 showAlert("Point B is not selected")
                 return
             }
-            hold(endpoints[1].coordinate)
+            holdLocation(endpoints[1].coordinate)
         } else {
             guard let annotation = endpoints.first else {
                 showAlert("Point A is not selected")
                 return
             }
-            hold(annotation.coordinate)
+            holdLocation(annotation.coordinate)
         }
     }
 
     func makeRoute() {
-        mapScene.makeRoute(showAlert: showAlert)
+        mapScene.makeRoute(
+            transportType: transportType,
+            showAlert: showAlert,
+            onRouteReady: { [weak self] route in
+                self?.routeDistance = route.distance
+            }
+        )
     }
+
+    /// Forget everything derived from a route once that route is gone, so distance,
+    /// journey time and the duration control do not outlive what they describe.
+    private func clearRouteState() {
+        routeDistance = 0
+        targetDurationMinutes = ""
+        tracks = []
+        tracksTimes = [:]
+        playbackCoordinates = []
+        playbackIndex = 0
+    }
+
+    /// Distance and journey time for the loaded route at the current speed.
+    var routeSummary: String? {
+        guard routeDistance > 0 else { return nil }
+
+        let seconds = routeDistance / max(speed / 3.6, 0.1)
+        let minutes = Int((seconds / 60).rounded())
+        let duration = minutes >= 60
+            ? "\(minutes / 60)h \(minutes % 60)m"
+            : "\(max(minutes, 1)) min"
+
+        let distance = String(format: "%.2f km", routeDistance / 1000)
+        return "\(distance) · about \(duration) at \(Int(speed.rounded())) km/h"
+    }
+
+    /// Pick the speed that covers the loaded route in `targetDurationMinutes`.
+    ///
+    /// Speed is clamped to the slider's range, and the user is told when the requested
+    /// time is not achievable within it rather than being given a silently wrong speed.
+    func applyTargetDuration() {
+        guard routeDistance > 0 else {
+            showAlert("Make a route first, then set how long it should take.")
+            return
+        }
+
+        guard let minutes = Double(targetDurationMinutes.trimmingCharacters(in: .whitespaces)),
+              minutes > 0 else {
+            showAlert("Enter the journey time in minutes, for example 20.")
+            return
+        }
+
+        let required = routeDistance / (minutes * 60) * 3.6
+        let clamped = min(max(required, Self.minimumSpeed), Self.maximumSpeed)
+        speed = (clamped / 5).rounded() * 5
+
+        if required > Self.maximumSpeed || required < Self.minimumSpeed {
+            showAlert(
+                String(
+                    format: "That journey needs %.0f km/h, outside the %.0f–%.0f range. Speed set to %.0f km/h.",
+                    required, Self.minimumSpeed, Self.maximumSpeed, speed
+                )
+            )
+        }
+
+        log("target duration \(Int(minutes)) min over \(String(format: "%.2f", routeDistance / 1000)) km — speed set to \(Int(speed)) km/h")
+    }
+
+    static let minimumSpeed: Double = 5
+    static let maximumSpeed: Double = 200
 
     func simulateRoute() {
         guard let route = mapScene.route else {
@@ -361,7 +465,11 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
 
         log("Route segment distances: \(tracks.map { CLLocation.distance(from: $0.startPoint.coordinate, to: $0.endPoint.coordinate) })")
 
-        startRoutePlayback()
+        isPaused = false
+        invalidateState()
+        isPlayingRoute = startRoutePlayback()
+
+        startMovementTimer()
     }
 
     func simulateFromAToB() {
@@ -380,7 +488,14 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
             )
         ]
 
-        startRoutePlayback()
+        // A straight A-to-B run has no MKRoute, so measure the leg directly.
+        routeDistance = CLLocation.distance(from: endpoints[0].coordinate, to: endpoints[1].coordinate)
+
+        isPaused = false
+        invalidateState()
+        isPlayingRoute = startRoutePlayback()
+
+        startMovementTimer()
     }
 
     func updateMapRegion(force: Bool = false) {
@@ -389,9 +504,8 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
             return
         }
 
-        // Only ask once, on first determination. The old code re-requested on every
-        // single location update, which is a lot of churn while driving.
         guard !isMapCentered || force, let location = locationManager.location else {
+            locationManager.requestAlwaysAuthorization()
             return
         }
 
@@ -403,10 +517,20 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
         let adjustedRegion = mapView.mkMapView.regionThatFits(viewRegion)
 
         mapView.mkMapView.setRegion(adjustedRegion, animated: true)
+
+        mapView.mkMapView.showsUserLocation = true
     }
 
     func prepareEmulator() {
-        guard validateAdbSettings() else { return }
+        if adbDeviceId.isEmpty {
+            showAlert("Please specify device id")
+            return
+        }
+
+        if adbPath.isEmpty {
+            showAlert("Please specify path to adb")
+            return
+        }
 
         executeAdbCommand(args: ["shell", "settings", "put", "secure", "location_providers_allowed", "+gps"])
         executeAdbCommand(
@@ -416,7 +540,15 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
     }
 
     func installHelperApp() {
-        guard validateAdbSettings() else { return }
+        if adbDeviceId.isEmpty {
+            showAlert("Please specify device id")
+            return
+        }
+
+        if adbPath.isEmpty {
+            showAlert("Please specify path to adb")
+            return
+        }
 
         guard let apkURL = Bundle.main.url(forResource: "helper-app", withExtension: "apk") else {
             showAlert("The helper APK is missing from the app bundle.")
@@ -431,36 +563,101 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
         )
     }
 
-    /// Stops route playback and releases any held point.
     func stopSimulation() {
-        stopRoutePlayback()
-        persistHold(nil)
-        locationHold.release(reason: "Stopped by the user")
+        isSimulating = false
+        isPlayingRoute = false
+        isPaused = false
+        persistHeldPoint(nil)
+        locationHold.release()
         runner.stop()
     }
 
-    /// Pushes the held point again right now.
-    func reapplyHeldLocation() {
-        locationHold.reapplyNow(trigger: .manual)
+    /// Suspend or resume the running simulation without losing progress.
+    func togglePauseSimulation() {
+        guard isSimulating else { return }
+
+        if isPaused {
+            if isPlayingRoute {
+                if runner.isPlaybackRunning {
+                    runner.resumeRoutePlayback()
+                } else {
+                    // Playback died with the connection; replay what is left of the route.
+                    restartPlaybackFromCurrentPosition()
+                }
+            }
+            isPaused = false
+            startMovementTimer()
+            log("simulation resumed")
+        } else {
+            if isPlayingRoute { runner.pauseRoutePlayback() }
+            isPaused = true
+            timer?.invalidate()
+            timer = nil
+            log("simulation paused")
+        }
+    }
+
+    /// Apply a speed change to a route already in flight.
+    ///
+    /// The GPX encodes speed as the gap between timestamps, so the only way to change it is
+    /// to rewrite the remainder of the route and restart playback from where the device
+    /// actually is. Debounced, because dragging the slider emits continuously.
+    private func scheduleSpeedChange() {
+        speedChangeWork?.cancel()
+        guard isSimulating, isPlayingRoute, !isPaused else { return }
+
+        let work = DispatchWorkItem { [weak self] in
+            self?.restartPlaybackFromCurrentPosition()
+        }
+        speedChangeWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
+    }
+
+    private func restartPlaybackFromCurrentPosition() {
+        guard isSimulating, isPlayingRoute else { return }
+        guard !connectedDevices.isEmpty else {
+            activity = .failed("No device connected")
+            return
+        }
+
+        let remaining = Array(playbackCoordinates.suffix(from: min(playbackIndex, playbackCoordinates.count)))
+        guard remaining.count > 1 else { return }
+
+        runner.stopRoutePlayback()
+
+        do {
+            let url = try GPXRoute.write(coordinates: remaining, speed: speed / 3.6)
+            let connection = iosConnection
+            playbackCoordinates = remaining
+            playbackIndex = 0
+
+            Task {
+                try await runner.playRoute(gpxURL: url, connection: connection, showAlert: showAlert)
+            }
+
+            log("speed changed to \(Int(speed)) km/h — replaying \(remaining.count) remaining points")
+        } catch {
+            showAlert(error.localizedDescription)
+        }
+    }
+
+    private func startMovementTimer() {
+        timer?.invalidate()
+        timer = Timer.scheduledTimer(withTimeInterval: timeScale, repeats: true) { [weak self] _ in
+            self?.performMovement()
+        }
     }
 
     func reset() {
-        stopRoutePlayback()
-        persistHold(nil)
-        locationHold.release(reason: "Reset")
         mapScene.resetMapVisuals()
+        clearRouteState()
+        persistHeldPoint(nil)
+        locationHold.release()
 
-        if platform == .android {
-            guard validateAdbSettings() else { return }
-            runner.resetAndroid(adbDeviceId: adbDeviceId, adbPath: adbPath, showAlert: showAlert)
-        } else if deviceMode == .device {
-            if useRSD {
-                runner.resetNewIos(rsdAddress: rsdAddress, rsdPort: rsdPort, showAlert: showAlert)
-            } else {
-                runner.resetIos(showAlert: showAlert)
-            }
+        if platform == .iOS {
+            runner.resetIos(showAlert: showAlert)
         } else {
-            runner.stop()
+            runner.resetAndroid(adbDeviceId: adbDeviceId, adbPath: adbPath, showAlert: showAlert)
         }
     }
 
@@ -483,7 +680,7 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
                     ],
                     showAlert: showAlert
                 )
-                let result = try ProcessRunner.run(task, timeout: 120)
+                let result = try ProcessRunner.run(task)
                 Self.presentPymobileDeviceOutput(stdout: result.stdout, stderr: result.stderr, showAlert: showAlert)
             } catch {
                 showAlert(error.localizedDescription)
@@ -501,7 +698,7 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
                     ],
                     showAlert: showAlert
                 )
-                let result = try ProcessRunner.run(task, timeout: 120)
+                let result = try ProcessRunner.run(task)
                 Self.presentPymobileDeviceOutput(stdout: result.stdout, stderr: result.stderr, showAlert: showAlert)
             } catch {
                 showAlert(error.localizedDescription)
@@ -575,23 +772,11 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
     }
 
     func showAlert(_ text: String) {
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-
-            self.log("Alert: \(text)")
-
-            // A failing keep-alive can produce the same message every few seconds;
-            // one modal is informative, twenty is a wall the user cannot dismiss.
-            if self.lastAlertText == text,
-               let lastAlertAt = self.lastAlertAt,
-               Date().timeIntervalSince(lastAlertAt) < 30 {
-                return
-            }
-
-            self.lastAlertText = text
-            self.lastAlertAt = Date()
+        DispatchQueue.main.async {
             self.alertText = text
             self.showingAlert = true
+            self.isSimulating = false
+            self.log("Alert: \(text)")
         }
     }
 
@@ -612,7 +797,7 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
         }
 
         putLocationOnMap(location: Location(name: "", latitude: lat, longitude: lng))
-        hold(CLLocationCoordinate2D(latitude: lat, longitude: lng))
+        holdLocation(CLLocationCoordinate2D(latitude: lat, longitude: lng))
     }
 
     func setToCoordinate(latLngString: String = "") {
@@ -645,283 +830,65 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
 
     // MARK: - Private
 
-    private func restoreSettings() {
-        if let storedPlatform = AppPlatform(rawValue: defaults.integer(forKey: AppStorageKey.platform)) {
-            platform = storedPlatform
-        }
-        if let storedDeviceMode = DeviceMode(rawValue: defaults.integer(forKey: AppStorageKey.deviceMode)) {
-            deviceMode = storedDeviceMode
-        }
-
-        useRSD = defaults.bool(forKey: AppStorageKey.useRSD)
-        rsdAddress = defaults.string(forKey: AppStorageKey.rsdAddress) ?? ""
-        rsdPort = defaults.string(forKey: AppStorageKey.rsdPort) ?? ""
-        adbPath = defaults.string(forKey: AppStorageKey.adbPath) ?? ""
-        adbDeviceId = defaults.string(forKey: AppStorageKey.adbDeviceId) ?? ""
-        isEmulator = defaults.bool(forKey: AppStorageKey.isEmulator)
-        xcodePath = defaults.string(forKey: AppStorageKey.xcodePath) ?? "/Applications/Xcode.app"
-        selectedSimulator = defaults.string(forKey: AppStorageKey.selectedSimulator) ?? ""
-        selectedDevice = defaults.string(forKey: AppStorageKey.selectedDevice) ?? ""
-
-        autoDiscoverRSD = defaults.object(forKey: AppStorageKey.autoDiscoverRSD) as? Bool ?? true
-        isKeepAliveEnabled = defaults.object(forKey: AppStorageKey.keepAliveEnabled) as? Bool ?? true
-
-        let storedInterval = defaults.double(forKey: AppStorageKey.keepAliveInterval)
-        keepAliveInterval = storedInterval > 0 ? storedInterval : LocationHoldSupervisor.defaultKeepAliveInterval
-
-        savedLocations = savedLocationsStore.load()
-    }
-
-    private func configureLocationHold() {
-        locationHold.isKeepAliveEnabled = isKeepAliveEnabled
-        locationHold.keepAliveInterval = keepAliveInterval
-
-        locationHold.log = { [weak self] message in
-            self?.log(message)
-        }
-
-        locationHold.inject = { [weak self] coordinate in
-            guard let self else {
-                return .failure(reason: "SimVirtualLocation is shutting down.")
-            }
-            return await self.applyLocation(coordinate)
-        }
-
-        locationHold.isSessionAlive = { [weak self] in
-            guard let self, self.platform == .iOS, self.deviceMode == .device else { return false }
-            return self.runner.isHoldingSession
-        }
-
-        locationHold.consumeSessionFailureReason = { [weak self] in
-            self?.runner.consumeHoldFailureReason()
-        }
-
-        // Reacting the instant the session dies, rather than on the next tick, is what
-        // turns a keep-alive-interval outage into a sub-second one.
-        runner.onSessionEnded = { [weak self] reason in
-            self?.locationHold.sessionEnded(reason: reason)
-        }
-
-        locationHold.onStatusChange = { [weak self] status in
-            self?.handleHoldStatusChange(status)
-        }
-    }
-
-    /// Starts (or moves) the held point. A held point and route playback are mutually
-    /// exclusive, so playback is stopped first.
-    private func hold(_ coordinate: CLLocationCoordinate2D) {
-        stopRoutePlayback()
-        persistHold(Coordinate(coordinate))
-        locationHold.hold(coordinate)
-    }
-
-    /// Remembers the held point so a crash, a forced quit, or a Mac restart resumes it
-    /// on next launch instead of silently leaving the device on real GPS.
-    private func persistHold(_ coordinate: Coordinate?) {
-        guard let coordinate else {
-            defaults.set(false, forKey: AppStorageKey.isHolding)
-            return
-        }
-
-        defaults.set(coordinate.latitude, forKey: AppStorageKey.heldLatitude)
-        defaults.set(coordinate.longitude, forKey: AppStorageKey.heldLongitude)
-        defaults.set(true, forKey: AppStorageKey.isHolding)
-    }
-
-    @MainActor
-    private func restoreHoldIfNeeded() {
-        guard defaults.bool(forKey: AppStorageKey.isHolding) else { return }
-
-        let latitude = defaults.double(forKey: AppStorageKey.heldLatitude)
-        let longitude = defaults.double(forKey: AppStorageKey.heldLongitude)
-
-        guard CoordinateParsing.isValid(latitude: latitude, longitude: longitude),
-              !(latitude == 0 && longitude == 0) else {
-            defaults.set(false, forKey: AppStorageKey.isHolding)
-            return
-        }
-
-        log("Resuming the location hold left over from the previous run")
-
-        if pointsMode == .single {
-            putLocationOnMap(location: Location(name: "", latitude: latitude, longitude: longitude))
-        }
-
-        locationHold.hold(
-            CLLocationCoordinate2D(latitude: latitude, longitude: longitude),
-            trigger: .restored
-        )
-    }
-
-    private func handleHoldStatusChange(_ status: LocationHoldStatus) {
-        holdStatus = status
-
-        let severity = status.severity
-        defer { lastNotifiedSeverity = severity }
-
-        guard severity == .warning || severity == .error, severity != lastNotifiedSeverity else {
-            return
-        }
-
-        // A flapping session recovers between every attempt, and beeping on each swing
-        // back to amber would train the user to ignore the sound. Escalation to a
-        // broken hold always gets through.
-        if severity == .warning, let lastNotifiedAt,
-           Date().timeIntervalSince(lastNotifiedAt) < Self.attentionCooldown {
-            return
-        }
-        lastNotifiedAt = Date()
-
-        // The user is very likely driving and not watching the window. Make the app
-        // announce itself instead of failing quietly behind a green label.
-        NSSound.beep()
-        _ = NSApplication.shared.requestUserAttention(
-            severity == .error ? .criticalRequest : .informationalRequest
-        )
-    }
-
-    @MainActor
-    private func applyLocation(_ location: CLLocationCoordinate2D) async -> InjectionOutcome {
-        if platform == .android {
-            guard !adbDeviceId.isEmpty else {
-                return .failure(reason: "Specify the Android device id.")
-            }
-            guard !adbPath.isEmpty else {
-                return .failure(reason: "Specify the path to adb.")
-            }
-
-            log("""
-            Run on android
-            - location: \(location)
-            - adbDeviceId: \(adbDeviceId)
-            - adbPath: \(adbPath)
-            - isEmulator: \(isEmulator)
-            """)
-
-            return await runner.runOnAndroid(
-                location: location,
-                adbDeviceId: adbDeviceId,
-                adbPath: adbPath,
-                isEmulator: isEmulator
-            )
-        }
-
-        if deviceMode == .device {
-            if useRSD {
-                let endpoint = await resolveRSD()
-                return await runner.runOnNewIos(
-                    location: location,
-                    rsdAddress: endpoint.address,
-                    rsdPort: endpoint.port
-                )
-            }
-            return await runner.runOnIos(location: location)
-        }
-
-        // The simulator transport is a fire-and-forget notification, so the booted
-        // list is the only evidence there is anything listening. Re-listing before
-        // each injection is what turns "shut down while you were driving" from a
-        // silent no-op into a reported failure — and lets a re-booted simulator
-        // recover on its own.
-        if shouldRefreshSimulators() {
-            await refreshSimulators()
-        }
-
-        return await runner.runOnSimulator(
-            location: location,
-            selectedSimulator: selectedSimulator,
-            bootedSimulators: bootedSimulators
-        )
-    }
-
-    /// The RSD address changes every time the tunnel is re-established. When tunneld
-    /// is running it knows the current one, which is the difference between recovering
-    /// on its own and waiting for the user to notice and paste a new address.
-    @MainActor
-    private func resolveRSD() async -> (address: String, port: String) {
-        guard autoDiscoverRSD else { return (rsdAddress, rsdPort) }
-
-        let isStale = lastRSDDiscoveryAt.map { Date().timeIntervalSince($0) > 3 } ?? true
-
-        if isStale {
-            lastRSDDiscoveryAt = Date()
-
-            let endpoint = await TunneldDiscovery.fetch(
-                preferredUDID: selectedDevice.isEmpty ? nil : selectedDevice
-            )
-
-            if let endpoint {
-                if discoveredRSD != endpoint {
-                    log("tunneld reports RSD \(endpoint.address) port \(endpoint.port)")
-                }
-                discoveredRSD = endpoint
-                // Mirror into the fields so the panel shows what is actually in use.
-                if rsdAddress != endpoint.address { rsdAddress = endpoint.address }
-                if rsdPort != endpoint.port { rsdPort = endpoint.port }
-            }
-        }
-
-        if let discoveredRSD {
-            return (discoveredRSD.address, discoveredRSD.port)
-        }
-
-        return (rsdAddress, rsdPort)
-    }
-
-    private func shouldRefreshSimulators() -> Bool {
-        guard let lastSimulatorRefreshAt else { return true }
-        return Date().timeIntervalSince(lastSimulatorRefreshAt) > Self.simulatorRefreshCooldown
-    }
-
-    private func validateAdbSettings() -> Bool {
-        if adbDeviceId.isEmpty {
-            showAlert("Please specify device id")
-            return false
-        }
-
-        if adbPath.isEmpty {
-            showAlert("Please specify path to adb")
-            return false
-        }
-
-        return true
-    }
-
     private func persistSavedLocations() {
         savedLocationsStore.save(savedLocations)
     }
 
-    private func startRoutePlayback() {
-        persistHold(nil)
+    private func invalidateState() {
         timer?.invalidate()
         timer = nil
         isSimulating = true
-        isRouteInjectionInFlight = false
         lastTrackLocation = nil
         currentTrackIndex = 0
-
-        locationHold.beginRoute()
-
-        let timer = Timer(timeInterval: timeScale, repeats: true) { [weak self] _ in
-            self?.performMovement()
-        }
-        RunLoop.main.add(timer, forMode: .common)
-        self.timer = timer
     }
 
-    private func stopRoutePlayback() {
-        timer?.invalidate()
-        timer = nil
-        isSimulating = false
-        isRouteInjectionInFlight = false
-        currentTrackIndex = 0
+    /// How the iOS 17+ device should be reached.
+    private var iosConnection: IOSConnection {
+        useUserspace ? .userspace(udid: selectedDevice) : .rsd(address: rsdAddress, port: rsdPort)
+    }
+
+    /// Coordinates along the computed route, in order.
+    private func routeCoordinates() -> [CLLocationCoordinate2D] {
+        guard let last = tracks.last else { return [] }
+        return tracks.map { $0.startPoint.coordinate } + [last.endPoint.coordinate]
+    }
+
+    /// Hand the whole route to the device as one `simulate-location play` process.
+    ///
+    /// - Returns: `true` when playback started, meaning `performMovement` should only animate
+    ///   the map rather than pushing a location per waypoint.
+    private func startRoutePlayback() -> Bool {
+        guard platform == .iOS, deviceMode == .device else { return false }
+
+        let coordinates = routeCoordinates()
+        guard coordinates.count > 1 else { return false }
+
+        playbackCoordinates = coordinates
+        playbackIndex = 0
+
+        do {
+            let url = try GPXRoute.write(coordinates: coordinates, speed: speed / 3.6)
+            let connection = iosConnection
+
+            Task {
+                try await runner.playRoute(gpxURL: url, connection: connection, showAlert: showAlert)
+            }
+
+            log("route playback started (\(coordinates.count) points)")
+            return true
+        } catch {
+            showAlert(error.localizedDescription)
+            return false
+        }
     }
 
     private func performMovement() {
         guard isSimulating, tracks.count > 0, currentTrackIndex < tracks.count else {
-            stopRoutePlayback()
-            persistHold(nil)
-            locationHold.release(reason: "Route playback finished")
+            isSimulating = false
+            isPaused = false
+            timer?.invalidate()
+            timer = nil
+            currentTrackIndex = 0
             printTimesToLog()
             return
         }
@@ -937,14 +904,14 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
         switch trackMove {
         case .moveTo(to: let to, from: let from, withSpeed: let moveSpeed):
             lastTrackLocation = to
-            sendRouteUpdate(to: to)
+            if !isPlayingRoute { run(location: to) }
             mapScene.placeSimulationAnnotation(at: to)
             log("move to — distance=\(CLLocation.distance(from: from, to: to)), speed=\(moveSpeed)")
 
         case .finishTo(to: let to, from: let from, withSpeed: let moveSpeed):
             lastTrackLocation = nil
             currentTrackIndex += 1
-            sendRouteUpdate(to: to)
+            if !isPlayingRoute { run(location: to) }
             mapScene.placeSimulationAnnotation(at: to)
             log("finish to — distance=\(CLLocation.distance(from: from, to: to)), speed=\(moveSpeed)")
         }
@@ -952,48 +919,40 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
         tracksTimes[track] = (tracksTimes[track] ?? 0) + timeScale
     }
 
-    private func sendRouteUpdate(to coordinate: CLLocationCoordinate2D) {
-        guard !isRouteInjectionInFlight else {
-            log("Skipped a route update: the previous one has not finished yet")
+    private func executeAdbCommand(args: [String], successMessage: String? = nil) {
+        if adbDeviceId.isEmpty {
+            showAlert("Please specify device id")
             return
         }
 
-        isRouteInjectionInFlight = true
-
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            let outcome = await self.applyLocation(coordinate)
-            self.isRouteInjectionInFlight = false
-            self.locationHold.record(outcome)
+        if adbPath.isEmpty {
+            showAlert("Please specify path to adb")
+            return
         }
-    }
-
-    private func executeAdbCommand(args: [String], successMessage: String? = nil) {
-        guard validateAdbSettings() else { return }
 
         let task = Process()
         task.executableURL = URL(fileURLWithPath: adbPath)
         task.arguments = args
 
-        // `adb install` can take a minute; running it inline froze the whole window.
-        Task.detached(priority: .userInitiated) { [weak self] in
-            guard let self else { return }
-            do {
-                let result = try ProcessRunner.run(task, timeout: 120)
-                let errorText = result.stderrText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let errorPipe = Pipe()
 
-                if result.terminationStatus != 0 || !errorText.isEmpty {
-                    self.showAlert(Runner.describeFailure(
-                        status: result.terminationStatus,
-                        stdout: result.stdoutText,
-                        stderr: result.stderrText
-                    ))
-                } else if let successMessage = successMessage {
-                    self.showAlert(successMessage)
-                }
-            } catch {
-                self.showAlert(error.localizedDescription)
-            }
+        task.standardError = errorPipe
+
+        do {
+            try task.run()
+            task.waitUntilExit()
+        } catch {
+            showAlert(error.localizedDescription)
+            return
+        }
+
+        let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+        let errorText = String(decoding: errorData, as: UTF8.self)
+
+        if !errorText.isEmpty {
+            showAlert(errorText)
+        } else if let successMessage = successMessage {
+            showAlert(successMessage)
         }
     }
 
@@ -1005,6 +964,198 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
         }
     }
 
+    private func configureLocationHold() {
+        isKeepAliveEnabled = defaults.object(forKey: AppStorageKey.keepLocationApplied) as? Bool ?? true
+
+        let storedInterval = defaults.double(forKey: AppStorageKey.keepAliveInterval)
+        keepAliveInterval = storedInterval > 0 ? storedInterval : LocationHoldSupervisor.defaultInterval
+
+        locationHold.isEnabled = isKeepAliveEnabled
+        locationHold.interval = keepAliveInterval
+
+        locationHold.apply = { [weak self] coordinate in
+            self?.run(location: coordinate)
+        }
+
+        locationHold.log = { [weak self] message in
+            self?.log(message)
+        }
+
+        locationHold.onStateChange = { [weak self] state in
+            guard let self else { return }
+            self.holdSummary = Self.describe(state)
+            self.holdState = state
+            self.announceIfLost(state)
+        }
+    }
+
+    /// The Mac is usually not being watched while a point is held, so a lost hold has to
+    /// announce itself rather than sit quietly in a panel.
+    private func announceIfLost(_ state: LocationHoldSupervisor.State) {
+        guard case .failed = state else {
+            wasHoldLost = false
+            return
+        }
+        guard !wasHoldLost else { return }
+        wasHoldLost = true
+
+        NSSound.beep()
+        _ = NSApplication.shared.requestUserAttention(.criticalRequest)
+    }
+
+    /// Applies `coordinate` and keeps it applied, rather than setting it once.
+    private func holdLocation(_ coordinate: CLLocationCoordinate2D) {
+        persistHeldPoint(coordinate)
+        locationHold.hold(coordinate)
+    }
+
+    /// Remembers the held point so a crash, a forced quit, or a Mac restart resumes it on
+    /// the next launch instead of leaving the device on real GPS with nobody watching.
+    private func persistHeldPoint(_ coordinate: CLLocationCoordinate2D?) {
+        guard let coordinate else {
+            defaults.set(false, forKey: AppStorageKey.isHolding)
+            return
+        }
+        defaults.set(coordinate.latitude, forKey: AppStorageKey.heldLatitude)
+        defaults.set(coordinate.longitude, forKey: AppStorageKey.heldLongitude)
+        defaults.set(true, forKey: AppStorageKey.isHolding)
+    }
+
+    private func restoreHeldPointIfNeeded() {
+        guard defaults.bool(forKey: AppStorageKey.isHolding) else { return }
+
+        let latitude = defaults.double(forKey: AppStorageKey.heldLatitude)
+        let longitude = defaults.double(forKey: AppStorageKey.heldLongitude)
+
+        guard CoordinateParsing.isValid(latitude: latitude, longitude: longitude),
+              !(latitude == 0 && longitude == 0) else {
+            defaults.set(false, forKey: AppStorageKey.isHolding)
+            return
+        }
+
+        log("Resuming the location hold left over from the previous run")
+
+        let coordinate = CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
+        if pointsMode == .single {
+            putLocationOnMap(location: Location(name: "", latitude: latitude, longitude: longitude))
+        }
+        locationHold.hold(coordinate)
+    }
+
+    /// Pushes the held point again on demand.
+    func reapplyHeldLocation() {
+        locationHold.reapply(trigger: .manual)
+    }
+
+    private static func describe(_ state: LocationHoldSupervisor.State) -> String? {
+        switch state {
+        case .idle:
+            return nil
+        case .held(let point, let confirmedAt):
+            return "Holding \(point.formatted) — confirmed \(holdTimeFormatter.string(from: confirmedAt))"
+        case .applying(let point):
+            return "Applying \(point.formatted)…"
+        case .failed(let point, let reason):
+            return "\(point.formatted) not applied — \(reason)"
+        }
+    }
+
+    private static let holdTimeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "HH:mm:ss"
+        return formatter
+    }()
+
+    private func reportInjectionFailure(_ error: Error) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.log("Could not apply the location: \(error.localizedDescription)")
+            self.activity = .failed(error.localizedDescription)
+        }
+    }
+
+    private func run(location: CLLocationCoordinate2D) {
+        defaults.set(platform.rawValue, forKey: AppStorageKey.platform)
+        defaults.set(adbPath, forKey: AppStorageKey.adbPath)
+        defaults.set(adbDeviceId, forKey: AppStorageKey.adbDeviceId)
+        defaults.set(isEmulator, forKey: AppStorageKey.isEmulator)
+
+        if platform == .android {
+            runOnAndroid(location: location)
+            return
+        }
+        if deviceMode == .device {
+            if useRSD {
+                // `try` inside a bare `Task` discards the error: a failure to even build
+                // the command used to vanish without a word.
+                Task { [weak self] in
+                    guard let self else { return }
+                    do {
+                        try await self.runner.runOnNewIos(
+                            location: location,
+                            connection: self.iosConnection,
+                            showAlert: self.showAlert
+                        )
+                    } catch {
+                        self.reportInjectionFailure(error)
+                    }
+                }
+
+            } else {
+                Task { [weak self] in
+                    guard let self else { return }
+                    do {
+                        try await self.runner.runOnIos(
+                            location: location,
+                            showAlert: self.showAlert
+                        )
+                    } catch {
+                        self.reportInjectionFailure(error)
+                    }
+                }
+            }
+        } else {
+            if bootedSimulators.isEmpty {
+                isSimulating = false
+                showAlert(SimulatorFetchError.noBootedSimulators.description)
+            }
+            runner.runOnSimulator(
+                location: location,
+                selectedSimulator: selectedSimulator,
+                bootedSimulators: bootedSimulators,
+                showAlert: showAlert
+            )
+        }
+    }
+
+    private func runOnAndroid(location: CLLocationCoordinate2D) {
+        if adbDeviceId.isEmpty {
+            showAlert("Please specify device id")
+            return
+        }
+
+        if adbPath.isEmpty {
+            showAlert("Please specify path to adb")
+            return
+        }
+
+        log("""
+        Run on android
+        - location: \(location)
+        - adbDeviceId: \(adbDeviceId)
+        - adbPath: \(adbPath)
+        - isEmulator: \(isEmulator)
+        """)
+        runner.runOnAndroid(
+            location: location,
+            adbDeviceId: adbDeviceId,
+            adbPath: adbPath,
+            isEmulator: isEmulator,
+            showAlert: showAlert
+        )
+    }
+
     private func makeDeveloperImageDmgPath(iOSVersion: String) -> String {
         "\(xcodePath)\(iOSDeveloperImagePath)\(iOSVersion)\(iOSDeveloperImageDmg)"
     }
@@ -1013,25 +1164,10 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
         "\(xcodePath)\(iOSDeveloperImagePath)\(iOSVersion)\(iOSDeveloperImageSignature)"
     }
 
-    /// Safe to call from any thread — the runner and the pipe drains log off the main
-    /// thread, and `logs` is a `@Published` property.
     private func log(_ message: String) {
-        if Thread.isMainThread {
-            appendLog(message)
-        } else {
-            DispatchQueue.main.async { [weak self] in
-                self?.appendLog(message)
-            }
-        }
-    }
-
-    private func appendLog(_ message: String) {
         logs.insert(LogEntry(date: Date(), message: message), at: 0)
-        if logs.count > Self.maxLogEntries {
-            logs.removeLast(logs.count - Self.maxLogEntries)
-        }
     }
-
+    
     func clearLogs() {
         logs.removeAll()
     }

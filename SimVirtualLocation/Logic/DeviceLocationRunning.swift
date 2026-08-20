@@ -2,50 +2,63 @@ import CoreLocation
 import Foundation
 
 /// Abstraction over simulator / USB iOS / RSD iOS / Android injection for tests and composition.
-///
-/// Every injection reports an `InjectionOutcome` instead of failing silently: the
-/// supervisor above this protocol can only keep a point applied if it is told when an
-/// attempt did not work.
 protocol DeviceLocationRunning: IOSProcessLaunching {
     var timeDelay: TimeInterval { get set }
     var log: ((String) -> Void)? { get set }
+    var onActivity: ((DeviceActivity) -> Void)? { get set }
+    var onLocationPlayed: ((Double, Double) -> Void)? { get set }
+    var onLocationConfirmed: (() -> Void)? { get set }
+    var onSessionEnded: ((String?) -> Void)? { get set }
     var pymobiledevicePath: String? { get set }
 
-    /// Fired on the main thread the instant a long-lived device session dies on its
-    /// own, so the point can be re-applied without waiting for a poll.
-    var onSessionEnded: ((String) -> Void)? { get set }
-
-    /// `true` while a long-lived helper process is holding a device session open.
-    var isHoldingSession: Bool { get }
-
-    /// Why the last long-lived session ended by itself, if it did. Reading clears it.
-    func consumeHoldFailureReason() -> String?
+    /// `true` while a `simulate-location set` process is still holding a point open.
+    var isLocationSessionAlive: Bool { get }
 
     func stop()
 
     func runOnSimulator(
         location: CLLocationCoordinate2D,
         selectedSimulator: String,
-        bootedSimulators: [Simulator]
-    ) async -> InjectionOutcome
+        bootedSimulators: [Simulator],
+        showAlert: @escaping (String) -> Void
+    )
 
-    func runOnIos(location: CLLocationCoordinate2D) async -> InjectionOutcome
+    func runOnIos(
+        location: CLLocationCoordinate2D,
+        showAlert: @escaping (String) -> Void
+    ) async throws
 
     func runOnNewIos(
         location: CLLocationCoordinate2D,
-        rsdAddress: String,
-        rsdPort: String
-    ) async -> InjectionOutcome
+        connection: IOSConnection,
+        showAlert: @escaping (String) -> Void
+    ) async throws
+
+    func playRoute(
+        gpxURL: URL,
+        connection: IOSConnection,
+        showAlert: @escaping (String) -> Void
+    ) async throws
+
+    var isPlaybackRunning: Bool { get }
+
+    func stopRoutePlayback()
+
+    @discardableResult
+    func pauseRoutePlayback() -> Bool
+
+    @discardableResult
+    func resumeRoutePlayback() -> Bool
 
     func runOnAndroid(
         location: CLLocationCoordinate2D,
         adbDeviceId: String,
         adbPath: String,
-        isEmulator: Bool
-    ) async -> InjectionOutcome
+        isEmulator: Bool,
+        showAlert: @escaping (String) -> Void
+    )
 
     func resetIos(showAlert: @escaping (String) -> Void)
-    func resetNewIos(rsdAddress: String, rsdPort: String, showAlert: @escaping (String) -> Void)
     func resetAndroid(adbDeviceId: String, adbPath: String, showAlert: @escaping (String) -> Void)
 }
 

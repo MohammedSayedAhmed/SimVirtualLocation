@@ -9,23 +9,11 @@ enum AppStorageKey {
     static let adbPath = "adb_path"
     static let adbDeviceId = "adb_device_id"
     static let isEmulator = "is_emulator"
-
-    /// Stores `DeviceMode.rawValue`.
-    static let deviceMode = "device_mode"
-    static let useRSD = "use_rsd"
-    static let rsdAddress = "rsd_address"
-    static let rsdPort = "rsd_port"
-    static let selectedSimulator = "selected_simulator"
-    static let selectedDevice = "selected_device"
-
-    static let keepAliveEnabled = "keep_alive_enabled"
+    static let useUserspace = "use_userspace_tunnel"
+    static let keepLocationApplied = "keep_location_applied"
     static let keepAliveInterval = "keep_alive_interval"
 
-    /// Discover the iOS 17+ RSD address/port from `pymobiledevice3 remote tunneld`.
-    static let autoDiscoverRSD = "auto_discover_rsd"
-
-    /// The point being held, so a crash or a restart resumes it instead of leaving
-    /// the device on real GPS.
+    /// The point being held, so a crash or a restart resumes it.
     static let isHolding = "is_holding"
     static let heldLatitude = "held_latitude"
     static let heldLongitude = "held_longitude"

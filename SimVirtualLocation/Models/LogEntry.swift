@@ -9,9 +9,7 @@ import Foundation
 
 struct LogEntry: Identifiable {
 
-    /// Not the date: keep-alive logging can produce several entries inside the same
-    /// timestamp, and duplicate ids break `ForEach` identity.
-    let id = UUID()
+    var id: Date { date }
 
     let date: Date
     let message: String

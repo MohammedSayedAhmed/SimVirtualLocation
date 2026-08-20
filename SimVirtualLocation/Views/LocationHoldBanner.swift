@@ -2,14 +2,13 @@ import SwiftUI
 
 /// Always-visible answer to "is my location actually set right now?".
 ///
-/// The app used to show a simulation flag that nothing ever cleared, so a location
-/// that had silently reverted to real GPS still looked applied. This banner is driven
-/// by confirmed injection outcomes only.
+/// Driven only by confirmed injections, so it cannot show a point as applied after the
+/// device has quietly gone back to real GPS.
 struct LocationHoldBanner: View {
 
     @EnvironmentObject var locationController: LocationController
 
-    private var status: LocationHoldStatus { locationController.holdStatus }
+    private var state: LocationHoldSupervisor.State { locationController.holdState }
 
     var body: some View {
         HStack(alignment: .center, spacing: 10) {
@@ -18,11 +17,11 @@ struct LocationHoldBanner: View {
                 .foregroundColor(tint)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(status.title)
+                Text(title)
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundColor(tint)
 
-                if let detail = status.detail {
+                if let detail = locationController.holdSummary {
                     Text(detail)
                         .font(.system(size: 11))
                         .foregroundColor(.secondary)
@@ -33,7 +32,7 @@ struct LocationHoldBanner: View {
 
             Spacer(minLength: 8)
 
-            if status.isActive {
+            if state != .idle {
                 Button("Re-apply now") {
                     locationController.reapplyHeldLocation()
                 }
@@ -57,42 +56,42 @@ struct LocationHoldBanner: View {
         )
     }
 
+    private var title: String {
+        switch state {
+        case .idle:
+            return "No simulated location"
+        case .applying:
+            return "Applying location…"
+        case .held:
+            return "Location held"
+        case .failed:
+            return "LOCATION NOT SET — the device is on its real GPS"
+        }
+    }
+
     private var tint: Color {
-        switch status.severity {
-        case .neutral:
+        switch state {
+        case .idle:
             return .secondary
-        case .ok:
-            return .green
-        case .warning:
+        case .applying:
             return .orange
-        case .error:
+        case .held:
+            return .green
+        case .failed:
             return .red
         }
     }
 
     private var symbol: String {
-        switch status {
+        switch state {
         case .idle:
             return "location.slash"
         case .applying:
             return "arrow.triangle.2.circlepath"
-        case .holding:
+        case .held:
             return "checkmark.circle.fill"
-        case .route:
-            return "car.fill"
-        case .recovering:
-            return "exclamationmark.triangle.fill"
-        case .unverified:
-            return "eye.slash"
-        case .lost:
+        case .failed:
             return "xmark.octagon.fill"
         }
-    }
-}
-
-struct LocationHoldBanner_Previews: PreviewProvider {
-    static var previews: some View {
-        LocationHoldBanner()
-            .environmentObject(LocationController(mapView: MapView()))
     }
 }

@@ -47,7 +47,11 @@ final class MapSceneCoordinator: NSObject, MKMapViewDelegate {
         pointAnnotations
     }
 
-    func makeRoute(showAlert: @escaping (String) -> Void) {
+    func makeRoute(
+        transportType: TransportType,
+        showAlert: @escaping (String) -> Void,
+        onRouteReady: @escaping (MKRoute) -> Void = { _ in }
+    ) {
         guard pointAnnotations.count == 2 else {
             showAlert("Route requires two points")
             return
@@ -78,7 +82,7 @@ final class MapSceneCoordinator: NSObject, MKMapViewDelegate {
         let directionRequest = MKDirections.Request()
         directionRequest.source = sourceMapItem
         directionRequest.destination = destinationMapItem
-        directionRequest.transportType = .automobile
+        directionRequest.transportType = transportType == .driving ? .automobile : .walking
 
         let directions = MKDirections(request: directionRequest)
 
@@ -102,6 +106,8 @@ final class MapSceneCoordinator: NSObject, MKMapViewDelegate {
 
                 let rect = route.polyline.boundingMapRect
                 self.mapView.setRegion(MKCoordinateRegion(rect.insetBy(dx: -1000, dy: -1000)), animated: true)
+
+                onRouteReady(route)
             }
         }
     }
