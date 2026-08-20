@@ -23,4 +23,7 @@ enum AppStorageKey {
 
     /// The saved day plan, JSON-encoded.
     static let dayPlan = "day_plan"
+
+    /// Whether a day plan was running, so a quit or a restart picks it back up.
+    static let isRunningDayPlan = "is_running_day_plan"
 }

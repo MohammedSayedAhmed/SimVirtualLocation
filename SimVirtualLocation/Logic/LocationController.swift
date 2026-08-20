@@ -266,6 +266,7 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
         // After the rest of init, so device discovery and settings are already in place.
         DispatchQueue.main.async { [weak self] in
             self?.restoreHeldPointIfNeeded()
+            self?.resumeDayPlanIfNeeded()
         }
 
         runner.log = { [weak self] message in
@@ -1318,12 +1319,45 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
         // Whatever is driving the device now is about to be wrong: the plan decides
         // from the clock what should be happening, and issues it on its first tick.
         runner.stopRoutePlayback()
+        defaults.set(true, forKey: AppStorageKey.isRunningDayPlan)
         dayPlanRunner.start(daySchedule)
     }
 
     func stopDayPlan() {
+        defaults.set(false, forKey: AppStorageKey.isRunningDayPlan)
         dayPlanRunner.stop()
         stopSimulation()
+    }
+
+    /// Picks a running day plan back up after a quit, a crash, or a Mac restart.
+    ///
+    /// A held point is already restored this way, and a day plan going quiet over the
+    /// same gap would be the more surprising of the two. Nothing has to be remembered
+    /// about where the day had got to: it is decided from the clock, so working the day
+    /// out again and starting it lands wherever the day is now.
+    private func resumeDayPlanIfNeeded() {
+        guard defaults.bool(forKey: AppStorageKey.isRunningDayPlan) else { return }
+
+        guard dayPlan.stops.count >= 2 else {
+            defaults.set(false, forKey: AppStorageKey.isRunningDayPlan)
+            return
+        }
+
+        log("Picking the day plan back up from the previous run")
+
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.buildDaySchedule()
+
+            guard let schedule = self.daySchedule else {
+                // buildDaySchedule has already said why in dayPlanStatus.
+                self.log("Could not work the day out again — the plan is loaded but not running")
+                self.defaults.set(false, forKey: AppStorageKey.isRunningDayPlan)
+                return
+            }
+
+            self.dayPlanRunner.start(schedule)
+        }
     }
 
     private func playPlanLeg(path: [Coordinate], speedKph: Double) {
@@ -1376,6 +1410,9 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
     }
 
     private func restoreHeldPointIfNeeded() {
+        // A resuming day plan decides where the device belongs; a point left over from
+        // before the restart would only be somewhere the plan is about to move away from.
+        guard !defaults.bool(forKey: AppStorageKey.isRunningDayPlan) else { return }
         guard defaults.bool(forKey: AppStorageKey.isHolding) else { return }
 
         let latitude = defaults.double(forKey: AppStorageKey.heldLatitude)
