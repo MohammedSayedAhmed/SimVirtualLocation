@@ -65,6 +65,16 @@ struct DayPlanPanel: View {
                 })
                 .disabled(!locationController.isDayPlanRunning)
 
+                // A day plan is mostly waiting, and waiting looks exactly like nothing
+                // happening. Say which part of the day is currently in force.
+                if let now = nowText() {
+                    Divider()
+                    Text(now)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(.green)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
                 Text("Runs off your Mac's clock, so it picks the day up correctly after a restart or a spell unplugged.")
                     .font(.system(size: 10))
                     .foregroundColor(.secondary)
@@ -204,6 +214,25 @@ struct DayPlanPanel: View {
 
         guard (0...23).contains(hour), (0...59).contains(minute) else { return nil }
         return hour * 60 + minute
+    }
+
+    /// What the plan is doing at this moment, in the same words the list uses.
+    private func nowText() -> String? {
+        switch locationController.dayActivity {
+        case .stopped:
+            return nil
+
+        case .waiting(let stopIndex, let until):
+            guard let stop = locationController.daySchedule?.stops[safe: stopIndex] else { return nil }
+            guard let until else { return "At \(stop.name) for the rest of the day" }
+            return "At \(stop.name) until \(Self.clock.string(from: until))"
+
+        case .travelling(let legIndex, let arrival):
+            guard let schedule = locationController.daySchedule,
+                  let leg = schedule.legs[safe: legIndex],
+                  let to = schedule.stops[safe: leg.fromIndex + 1] else { return nil }
+            return "On the way to \(to.name), arriving \(Self.clock.string(from: arrival))"
+        }
     }
 
     private func arrivalText(forStopAt index: Int) -> String? {
