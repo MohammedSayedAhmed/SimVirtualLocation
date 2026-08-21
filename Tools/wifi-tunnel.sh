@@ -101,43 +101,50 @@ echo "$BJ" | grep -q "$UDID" || {
 }
 echo "--> resolved"
 
-line "4. Wi-Fi tunnel (needs your admin password)"
+line "4. Wi-Fi tunnel via tunneld (needs your admin password)"
+# start-tunnel stops to ask which lockdown to use, because the phone answers
+# on both IPv4 and IPv6 and each address becomes a separate candidate. There
+# is no flag to pick one. tunneld has no such prompt: its mobdev2 monitor
+# skips any UDID it already holds a tunnel for, so the duplicates collapse to
+# one tunnel, and --tunnel <UDID> then selects it by identity.
 sudo -v || exit 1
-TOUT=$(mktemp); TERR=$(mktemp)
-# stdin from /dev/null: if it tries to prompt for which device, fail loudly
-# rather than hang forever waiting on a keypress.
-sudo "$PMD" lockdown start-tunnel --mobdev2 --udid "$UDID" --script-mode \
-    < /dev/null > "$TOUT" 2>"$TERR" &
-TPID=$!
-echo "waiting up to 40s..."
-RSD=""
-for i in $(seq 1 40); do
+
+if curl -s --max-time 2 http://127.0.0.1:49151/ > /dev/null 2>&1; then
+    echo "a tunneld is already running; using it"
+    OWN_TUNNELD=no
+else
+    TDLOG=$(mktemp)
+    sudo "$PMD" remote tunneld > "$TDLOG" 2>&1 &
+    TDPID=$!
+    OWN_TUNNELD=yes
+    echo "started tunneld, waiting up to 60s for it to find the phone..."
+fi
+
+FOUND=no
+for i in $(seq 1 60); do
     sleep 1
-    RSD=$(grep -oE '^[0-9a-fA-F:.%]+[[:space:]]+[0-9]{2,5}$' "$TOUT" | head -1 || true)
-    [ -n "$RSD" ] && break
-    kill -0 $TPID 2>/dev/null || break
+    TUNNELS=$(curl -s --max-time 2 http://127.0.0.1:49151/ 2>/dev/null || true)
+    case "$TUNNELS" in *"$UDID"*) FOUND=yes; break;; esac
 done
 
-if [ -z "$RSD" ]; then
-    echo "No tunnel. stdout:"; cat "$TOUT"
-    echo "stderr (last 25):"; tail -25 "$TERR"
-    sudo kill $TPID 2>/dev/null
-    rm -f "$TOUT" "$TERR"
+if [ "$FOUND" != "yes" ]; then
+    echo "tunneld never produced a tunnel for $UDID."
+    echo "last API response: ${TUNNELS:-<none>}"
+    [ "${OWN_TUNNELD:-no}" = "yes" ] && { echo "tunneld log (last 30):"; tail -30 "$TDLOG"; sudo kill $TDPID 2>/dev/null; rm -f "$TDLOG"; }
     exit 1
 fi
-HOST=$(echo "$RSD" | awk '{print $1}')
-PORT=$(echo "$RSD" | awk '{print $2}')
-echo "TUNNEL UP: host=$HOST port=$PORT"
+echo "TUNNEL UP for $UDID"
+echo "$TUNNELS" | head -c 400; echo
 
 line "5. developer disk image"
-"$PMD" --no-color mounter auto-mount --rsd "$HOST" "$PORT" 2>&1 | tail -5 || true
+"$PMD" --no-color mounter auto-mount --tunnel "$UDID" 2>&1 | tail -5 || true
 
 line "6. setting the location over Wi-Fi"
 echo "(this command blocks by design - it holds the location while it runs)"
-"$PMD" --no-color developer dvt simulate-location set --rsd "$HOST" "$PORT" -- "$LAT" "$LON" \
+"$PMD" --no-color developer dvt simulate-location set --tunnel "$UDID" -- "$LAT" "$LON" \
     > /tmp/simloc.log 2>&1 &
 SPID=$!
-sleep 12
+sleep 15
 echo "--- output so far ---"; tail -15 /tmp/simloc.log
 
 if kill -0 $SPID 2>/dev/null; then
@@ -152,6 +159,10 @@ fi
 
 line "cleanup"
 kill $SPID 2>/dev/null
-sudo kill $TPID 2>/dev/null
-rm -f "$TOUT" "$TERR"
-echo "tunnel closed"
+if [ "${OWN_TUNNELD:-no}" = "yes" ]; then
+    sudo kill $TDPID 2>/dev/null
+    rm -f "$TDLOG"
+    echo "tunneld stopped"
+else
+    echo "left the pre-existing tunneld running"
+fi
