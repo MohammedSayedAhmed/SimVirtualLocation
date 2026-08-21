@@ -59,6 +59,18 @@ else
 fi
 rm -f "$OUT2"
 
+GW=$(route -n get default 2>/dev/null | awk '/gateway/ {print $2}')
+HOTSPOT=no
+case "$GW" in 172.20.10.*) HOTSPOT=yes;; esac
+line "network shape"
+echo "default gateway: ${GW:-unknown}"
+if [ "$HOTSPOT" = "yes" ]; then
+    echo "--> This Mac is on an iPhone Personal Hotspot."
+    echo "    That is the right thing to test: it is the only way the Mac and"
+    echo "    phone share a network in a car. The airplay control below will"
+    echo "    read 0 here and that means nothing - ignore it."
+fi
+
 line "any Apple devices at all on this network?"
 echo "(if this is also empty, the network is blocking mDNS between clients)"
 OUT3=$(mktemp)
@@ -73,6 +85,14 @@ line "usbmux network list"
 [ -n "$PMD" ] && "$PMD" --no-color usbmux list -n 2>&1 | head -20
 
 line "what this means"
-echo "phone advertising + usbmux empty ...... pymobiledevice3 or pairing issue"
-echo "phone not advertising, airplay seen ... phone Wi-Fi off, or different network"
-echo "nothing at all, airplay 0 ............. router is blocking mDNS (client isolation)"
+if [ "$HOTSPOT" = "yes" ]; then
+    echo "On a hotspot, the phone is the router rather than a peer on the network."
+    echo "mobdev2 or remoted FOUND .... the hotspot works, wireless is worth building"
+    echo "both empty ................. iOS does not advertise these on the hotspot"
+    echo "                             interface, and there is no way to point"
+    echo "                             pymobiledevice3 at an address by hand."
+else
+    echo "phone advertising + usbmux empty ...... pymobiledevice3 or pairing issue"
+    echo "phone not advertising, airplay seen ... phone Wi-Fi off, or different network"
+    echo "nothing at all, airplay 0 ............. router is blocking mDNS"
+fi
