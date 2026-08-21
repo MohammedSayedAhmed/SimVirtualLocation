@@ -87,19 +87,23 @@ read -r _
 
 line "4. privileged Wi-Fi tunnel"
 TUNLOG=$(mktemp)
-sudo "$PMD" remote start-tunnel -t wifi --script-mode > "$TUNLOG" 2>&1 &
+TUNERR=$(mktemp)
+# stderr carries a log line whose timestamp looks enough like "HOST PORT" to
+# fool a regex, so the address is read from stdout alone.
+sudo "$PMD" remote start-tunnel -t wifi --script-mode > "$TUNLOG" 2>"$TUNERR" &
 TUNPID=$!
 echo "waiting up to 30s for a tunnel address..."
 RSD=""
 for i in $(seq 1 30); do
     sleep 1
-    RSD=$(grep -Eo '[0-9a-fA-F:.]+ [0-9]+' "$TUNLOG" | head -1 || true)
+    RSD=$(grep -Eo '^[0-9a-fA-F:]+:[0-9a-fA-F:]* +[0-9]+$' "$TUNLOG" | head -1 || true)
     [ -n "$RSD" ] && break
 done
 
 if [ -z "$RSD" ]; then
     echo "No tunnel came up. Output was:"
     cat "$TUNLOG"
+    cat "$TUNERR" | tail -20
 else
     HOST=$(echo "$RSD" | awk '{print $1}')
     PORT=$(echo "$RSD" | awk '{print $2}')
