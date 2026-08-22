@@ -119,12 +119,9 @@ struct ContentView: View {
                     
                     if locationController.showLogs {
                         Button("Copy logs") {
-                            let log = locationController.logs.map { entry in
-                                let date = locationController.dateFormatter.string(from: entry.date)
-                                let message = entry.message
-
-                                return "\(date): \(message)"
-                            }.joined(separator: "\n\n")
+                            let log = locationController.logs
+                                .map { "\($0.stamp): \($0.message)" }
+                                .joined(separator: "\n\n")
 
                             let pasteboard = NSPasteboard.general
                             pasteboard.declareTypes([.string], owner: nil)
@@ -147,10 +144,13 @@ struct ContentView: View {
                 // Секция логов (показывается/скрывается)
                 if locationController.showLogs {
                     ScrollView {
-                        VStack(alignment: .leading, spacing: 1) {
+                        // Lazy, because a plain VStack in a ScrollView has to build and
+                        // measure every row to know how tall it is. Four rows are visible
+                        // and thousands existed, so every redraw laid out the lot.
+                        LazyVStack(alignment: .leading, spacing: 1) {
                             ForEach(locationController.logs) { log in
                                 HStack(spacing: 8) {
-                                    Text(locationController.dateFormatter.string(from: log.date))
+                                    Text(log.stamp)
                                         .padding(.vertical, 4)
                                         .padding(.horizontal, 8)
                                     Text(log.message)

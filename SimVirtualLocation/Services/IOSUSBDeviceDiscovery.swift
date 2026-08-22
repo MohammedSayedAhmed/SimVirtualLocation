@@ -6,8 +6,11 @@ enum IOSUSBDiscoveryError: Error {
 
 /// Reads connected iOS devices via `pymobiledevice3 usbmux list` (uses the same JSON shape as before).
 enum IOSUSBDeviceDiscovery {
+    /// - Parameter verbose: false for a background rescan, which runs every few seconds
+    ///   forever. Only the routine success lines are dropped; failures always log.
     static func fetchConnectedDevices(
         runner: IOSProcessLaunching,
+        verbose: Bool = true,
         showAlert: @escaping (String) -> Void,
         log: @escaping (String) -> Void
     ) async throws -> [Device] {
@@ -16,7 +19,7 @@ enum IOSUSBDeviceDiscovery {
 
         let exe = task.executableURL?.path ?? ""
         let args = task.arguments?.joined(separator: " ") ?? ""
-        log("getConnectedDevices: \(exe) \(args)")
+        if verbose { log("getConnectedDevices: \(exe) \(args)") }
 
         let result = try ProcessRunner.run(task)
 
@@ -27,7 +30,9 @@ enum IOSUSBDeviceDiscovery {
         }
 
         let devices = try JSONDecoder().decode([Device].self, from: result.stdout)
-        log("connected devices: [\(devices.map { "\($0.id) \($0.name) \($0.version)" }.joined(separator: ", "))]")
+        if verbose {
+            log("connected devices: [\(devices.map { "\($0.id) \($0.name) \($0.version)" }.joined(separator: ", "))]")
+        }
 
         return devices
     }

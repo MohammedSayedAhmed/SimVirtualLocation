@@ -26,7 +26,9 @@ enum SimulatorFetchError: Error, CustomStringConvertible {
 enum SimulatorDiscovery {
 
     /// Lists booted simulators (prefixed with “To all simulators” empty entry). Throws on parse or tool failure.
-    static func fetchBootedSimulators(log: @escaping (String) -> Void) throws -> [Simulator] {
+    /// - Parameter verbose: false for a background rescan. Only routine success lines are
+    ///   dropped; a simctl failure or a decode failure logs every time.
+    static func fetchBootedSimulators(verbose: Bool = true, log: @escaping (String) -> Void) throws -> [Simulator] {
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
         // Only booted devices (same as `simctl list devices | grep Booted`, but stable JSON).
@@ -38,7 +40,7 @@ enum SimulatorDiscovery {
 
         let exe = task.executableURL?.path ?? "xcrun"
         let args = task.arguments?.joined(separator: " ") ?? ""
-        log("getBootedSimulators: \(exe) \(args)")
+        if verbose { log("getBootedSimulators: \(exe) \(args)") }
 
         let result = try ProcessRunner.run(task)
 
@@ -62,7 +64,9 @@ enum SimulatorDiscovery {
             throw SimulatorFetchError.noBootedSimulators
         }
 
-        log("booted simulators: [\(bootedSimulators.map { "\($0.id) \($0.name)" }.joined(separator: ", "))]")
+        if verbose {
+            log("booted simulators: [\(bootedSimulators.map { "\($0.id) \($0.name)" }.joined(separator: ", "))]")
+        }
 
         return [Simulator.empty()] + bootedSimulators
     }

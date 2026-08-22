@@ -304,15 +304,24 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
         // tools installed filled the log with an error nobody can act on.
         let wantsSimulators = await MainActor.run { platform == .iOS && deviceMode == .simulator }
 
+        // A background rescan runs every few seconds forever, and logging the command
+        // and its result each time was most of what ever reached the log. Failures still
+        // log every time — those are the lines someone is looking for.
+        let verbose = !silently
+
         var simulators: [Simulator]?
         if wantsSimulators {
-            simulators = (try? SimulatorDiscovery.fetchBootedSimulators(log: { [weak self] in self?.log($0) })) ?? []
+            simulators = (try? SimulatorDiscovery.fetchBootedSimulators(
+                verbose: verbose,
+                log: { [weak self] in self?.log($0) }
+            )) ?? []
         }
 
         let devices: [Device]?
         do {
             devices = try await IOSUSBDeviceDiscovery.fetchConnectedDevices(
                 runner: runner,
+                verbose: verbose,
                 showAlert: { [weak self] in self?.showAlert($0) },
                 log: { [weak self] in self?.log($0) }
             )
@@ -338,10 +347,19 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
     /// that was the way to hit it.
     @MainActor
     private func applyDiscovery(simulators: [Simulator]?, devices: [Device]?, silently: Bool) {
+        // Assigning a @Published property publishes whether or not the value changed, and
+        // this runs on a timer forever, so an unchanged rescan was redrawing the window
+        // several times a minute for nothing. Each assignment is guarded separately: the
+        // selection fixups below still have to run even when the list itself is the same.
         if let simulators {
-            bootedSimulators = simulators
+            if simulators != bootedSimulators {
+                bootedSimulators = simulators
+            }
             if selectedSimulator.isEmpty || !simulators.contains(where: { $0.id == selectedSimulator }) {
-                selectedSimulator = simulators.first?.id ?? ""
+                let replacement = simulators.first?.id ?? ""
+                if replacement != selectedSimulator {
+                    selectedSimulator = replacement
+                }
             }
         }
 
@@ -349,19 +367,24 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
         let previousDevices = connectedDevices
 
         if let devices {
-            connectedDevices = devices
+            if devices != connectedDevices {
+                connectedDevices = devices
+            }
         } else {
-            connectedDevices = []
+            if !connectedDevices.isEmpty {
+                connectedDevices = []
+            }
             if !silently {
                 activity = .failed("Could not list devices — see Logs")
             }
         }
 
         // Keep the user's choice as long as that device is still attached.
-        if connectedDevices.contains(where: { $0.id == previousSelection }) {
-            selectedDevice = previousSelection
-        } else {
-            selectedDevice = connectedDevices.first?.id ?? ""
+        let newSelection = connectedDevices.contains(where: { $0.id == previousSelection })
+            ? previousSelection
+            : (connectedDevices.first?.id ?? "")
+        if newSelection != selectedDevice {
+            selectedDevice = newSelection
         }
 
         let changed = connectedDevices != previousDevices
@@ -1540,11 +1563,29 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
     /// where it is called from was one of the ways to wedge SwiftUI's publishing lock.
     /// The timestamp is taken here rather than on arrival so a hop does not skew it.
     private func log(_ message: String) {
-        let entry = LogEntry(date: Date(), message: message)
+        let now = Date()
+        let entry = LogEntry(date: now, message: message, stamp: Self.logTimeFormatter.string(from: now))
         Self.onMain { [weak self] in
-            self?.logs.insert(entry, at: 0)
+            guard let self else { return }
+            self.logs.insert(entry, at: 0)
+            // Bounded, because nothing else ever shrinks this and the pane redraws it.
+            // Deliberately generous: at the noisiest polling rate a small cap would be a
+            // few minutes of history, and a disconnect from twenty minutes ago is exactly
+            // what someone opens this pane to find.
+            if self.logs.count > Self.maxLogEntries {
+                self.logs.removeLast(self.logs.count - Self.maxLogEntries)
+            }
         }
     }
+
+    /// How many log lines are kept. Newest are at index 0, so the oldest fall off the end.
+    private static let maxLogEntries = 5_000
+
+    private static let logTimeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
+        return formatter
+    }()
 
     /// Runs `work` on the main thread, straight away when already there.
     ///
