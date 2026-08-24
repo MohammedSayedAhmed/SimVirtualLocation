@@ -13,6 +13,9 @@ enum AppStorageKey {
     static let keepLocationApplied = "keep_location_applied"
     static let keepAliveInterval = "keep_alive_interval"
 
+    /// Whether route playback drives like a car rather than at a constant speed.
+    static let realisticDriving = "realistic_driving"
+
     /// The point being held, so a crash or a restart resumes it.
     static let isHolding = "is_holding"
     static let heldLatitude = "held_latitude"

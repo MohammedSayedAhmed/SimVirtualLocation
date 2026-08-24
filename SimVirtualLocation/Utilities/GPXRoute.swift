@@ -61,11 +61,35 @@ enum GPXRoute {
         return try write(points: points, interval: sampleInterval, name: "simulated route")
     }
 
+    /// Write a drive whose points carry their own arrival times.
+    ///
+    /// Constant-speed playback spaces timestamps evenly. A real car does not move that
+    /// way, so a realistic drive arrives here with the spacing already decided — braking
+    /// into corners, waiting at lights — and this only has to write it out.
+    static func write(samples: [DriveProfile.Sample]) throws -> URL {
+        guard !samples.isEmpty else { throw Failure.emptyRoute }
+        return try write(
+            stamps: samples.map { ($0.coordinate, $0.offset) },
+            name: "realistic drive"
+        )
+    }
+
     private static func write(
         points: [CLLocationCoordinate2D],
         interval: TimeInterval,
         name: String
     ) throws -> URL {
+        try write(
+            stamps: points.enumerated().map { ($0.element, Double($0.offset) * interval) },
+            name: name
+        )
+    }
+
+    private static func write(
+        stamps: [(CLLocationCoordinate2D, TimeInterval)],
+        name: String
+    ) throws -> URL {
+        let points = stamps
         guard !points.isEmpty else { throw Failure.emptyRoute }
 
         let formatter = ISO8601DateFormatter()
@@ -79,8 +103,8 @@ enum GPXRoute {
 
         """
 
-        for (index, point) in points.enumerated() {
-            let stamp = formatter.string(from: start.addingTimeInterval(Double(index) * interval))
+        for (point, offset) in points {
+            let stamp = formatter.string(from: start.addingTimeInterval(offset))
             gpx += "    <trkpt lat=\"\(point.latitude)\" lon=\"\(point.longitude)\"><time>\(stamp)</time></trkpt>\n"
         }
 

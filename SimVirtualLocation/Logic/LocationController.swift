@@ -105,6 +105,21 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
     /// Length of the route currently loaded, in metres. Zero when none is loaded.
     @Published private(set) var routeDistance: CLLocationDistance = 0
 
+    /// Drive like a car rather than a cursor: accelerate, brake into corners, wait at
+    /// lights. See `DriveProfile`.
+    @Published var isRealisticDriving: Bool = false {
+        didSet {
+            guard isRealisticDriving != oldValue else { return }
+            defaults.set(isRealisticDriving, forKey: AppStorageKey.realisticDriving)
+        }
+    }
+
+    /// What the routing service thinks the drive takes right now. It already accounts for
+    /// the traffic it can see, so a realistic drive stretched to match it reproduces
+    /// today's conditions. Zero when no route has been worked out, or when offline —
+    /// the drive is then shaped by the model alone.
+    @Published private(set) var routeExpectedTravelTime: TimeInterval = 0
+
     /// Journey time the user wants, in minutes. Applying it derives the speed.
     @Published var targetDurationMinutes: String = ""
 
@@ -492,6 +507,7 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
             showAlert: showAlert,
             onRouteReady: { [weak self] route in
                 self?.routeDistance = route.distance
+                self?.routeExpectedTravelTime = route.expectedTravelTime
             }
         )
     }
@@ -500,6 +516,7 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
     /// journey time and the duration control do not outlive what they describe.
     private func clearRouteState() {
         routeDistance = 0
+        routeExpectedTravelTime = 0
         targetDurationMinutes = ""
         tracks = []
         tracksTimes = [:]
@@ -511,13 +528,27 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
     var routeSummary: String? {
         guard routeDistance > 0 else { return nil }
 
-        let seconds = routeDistance / max(speed / 3.6, 0.1)
+        // A realistic drive takes as long as the routing estimate says, because that is
+        // what it is fitted to. Quoting the constant-speed figure there would be wrong.
+        let usesEstimate = isRealisticDriving && routeExpectedTravelTime > 0
+        let seconds = usesEstimate
+            ? routeExpectedTravelTime
+            : routeDistance / max(speed / 3.6, 0.1)
+
         let minutes = Int((seconds / 60).rounded())
         let duration = minutes >= 60
             ? "\(minutes / 60)h \(minutes % 60)m"
             : "\(max(minutes, 1)) min"
 
         let distance = String(format: "%.2f km", routeDistance / 1000)
+
+        if usesEstimate {
+            let average = routeDistance / max(routeExpectedTravelTime, 1) * 3.6
+            return "\(distance) · \(duration) with current traffic · averages \(Int(average.rounded())) km/h"
+        }
+        if isRealisticDriving {
+            return "\(distance) · about \(duration) · no traffic estimate, driving modelled"
+        }
         return "\(distance) · about \(duration) at \(Int(speed.rounded())) km/h"
     }
 
@@ -744,7 +775,18 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
         runner.stopRoutePlayback()
 
         do {
-            let url = try GPXRoute.write(coordinates: remaining, speed: speed / 3.6)
+            // The remainder gets the remaining share of the estimate, and the original
+            // route's seed, so resuming does not move every light.
+            let fraction = playbackCoordinates.isEmpty
+                ? 1.0
+                : Double(remaining.count) / Double(playbackCoordinates.count)
+            let url = try writeDriveGPX(
+                coordinates: remaining,
+                speedKph: speed,
+                expectedTravelTime: routeExpectedTravelTime,
+                fraction: fraction,
+                seed: Self.driveSeed(for: playbackCoordinates)
+            )
             let connection = iosConnection
             playbackCoordinates = remaining
             playbackIndex = 0
@@ -985,7 +1027,12 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
         playbackIndex = 0
 
         do {
-            let url = try GPXRoute.write(coordinates: coordinates, speed: speed / 3.6)
+            let url = try writeDriveGPX(
+                coordinates: coordinates,
+                speedKph: speed,
+                expectedTravelTime: routeExpectedTravelTime,
+                seed: Self.driveSeed(for: coordinates)
+            )
             let connection = iosConnection
 
             Task {
@@ -1084,6 +1131,7 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
 
     private func configureLocationHold() {
         isKeepAliveEnabled = defaults.object(forKey: AppStorageKey.keepLocationApplied) as? Bool ?? true
+        isRealisticDriving = defaults.bool(forKey: AppStorageKey.realisticDriving)
 
         let storedInterval = defaults.double(forKey: AppStorageKey.keepAliveInterval)
         keepAliveInterval = storedInterval > 0 ? storedInterval : LocationHoldSupervisor.defaultInterval
@@ -1194,8 +1242,8 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
             self?.locationHold.hold(coordinate)
         }
 
-        dayPlanRunner.playLeg = { [weak self] path, speedKph in
-            self?.playPlanLeg(path: path, speedKph: speedKph)
+        dayPlanRunner.playLeg = { [weak self] path, speedKph, duration in
+            self?.playPlanLeg(path: path, speedKph: speedKph, duration: duration)
         }
 
         // A leg with no session behind it is a device that has quietly stopped moving.
@@ -1361,16 +1409,68 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
         }
     }
 
-    private func playPlanLeg(path: [Coordinate], speedKph: Double) {
+    /// Writes the GPX for a stretch of driving, realistic or constant-speed.
+    ///
+    /// - Parameters:
+    ///   - fraction: how much of the whole route this is, so a partial replay after a
+    ///     pause gets its share of the traffic-adjusted duration rather than all of it.
+    ///   - seed: keeps the lights in the same places when a route is replayed part-way
+    ///     through, so resuming does not reshuffle the drive.
+    private func writeDriveGPX(
+        coordinates: [CLLocationCoordinate2D],
+        speedKph: Double,
+        expectedTravelTime: TimeInterval,
+        fraction: Double = 1.0,
+        seed: UInt64
+    ) throws -> URL {
+        guard isRealisticDriving else {
+            return try GPXRoute.write(coordinates: coordinates, speed: max(speedKph, 1) / 3.6)
+        }
+
+        let target = expectedTravelTime > 0 ? expectedTravelTime * max(min(fraction, 1), 0.01) : nil
+        let samples = DriveProfile.build(
+            path: coordinates,
+            settings: .init(cruiseSpeed: max(speedKph, 1) / 3.6, seed: seed),
+            targetDuration: target
+        )
+
+        if let arrival = samples.last?.offset {
+            let minutes = Int((arrival / 60).rounded())
+            log("realistic drive: \(samples.count) points, about \(minutes) min"
+                + (target != nil ? " (matched to the routing estimate, traffic included)" : " (no live estimate — modelled)"))
+        }
+
+        return try GPXRoute.write(samples: samples)
+    }
+
+    /// A stable seed for one route, so its lights do not move between replays.
+    private static func driveSeed(for coordinates: [CLLocationCoordinate2D]) -> UInt64 {
+        guard let first = coordinates.first, let last = coordinates.last else { return 1 }
+        var hasher = Hasher()
+        hasher.combine(Int(first.latitude * 10_000))
+        hasher.combine(Int(first.longitude * 10_000))
+        hasher.combine(Int(last.latitude * 10_000))
+        hasher.combine(Int(last.longitude * 10_000))
+        hasher.combine(coordinates.count)
+        return UInt64(bitPattern: Int64(hasher.finalize()))
+    }
+
+    private func playPlanLeg(path: [Coordinate], speedKph: Double, duration: TimeInterval) {
         // A leg is movement, not a held point: let go of the hold so the two are not
         // both driving the device.
         locationHold.release()
 
+        let coordinates = path.map { $0.clCoordinate }
         let url: URL
         do {
-            url = try GPXRoute.write(
-                coordinates: path.map { $0.clCoordinate },
-                speed: max(speedKph, 1) / 3.6
+            // The plan already decided when this leg arrives, so a realistic drive is
+            // fitted to that rather than being allowed to set its own pace. The stops and
+            // braking are real; the arrival time stays the one on the timetable.
+            url = try writeDriveGPX(
+                coordinates: coordinates,
+                speedKph: speedKph,
+                expectedTravelTime: duration,
+                seed: Self.driveSeed(for: coordinates)
             )
         } catch {
             reportInjectionFailure(error)

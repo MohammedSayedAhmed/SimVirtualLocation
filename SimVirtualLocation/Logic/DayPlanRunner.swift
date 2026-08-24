@@ -37,8 +37,11 @@ final class DayPlanRunner {
     /// Hold a fixed point (used while parked at a stop).
     var holdPoint: ((CLLocationCoordinate2D) -> Void)?
 
-    /// Play the remainder of a leg: the path still to cover, at this speed in km/h.
-    var playLeg: (([Coordinate], Double) -> Void)?
+    /// Play the remainder of a leg: the path still to cover, at this speed in km/h, and
+    /// how many seconds remain before it is due to arrive. The last of those matters
+    /// because a realistic drive is shaped to fit the time it has rather than run at a
+    /// fixed speed — the plan's arrival times stay exact either way.
+    var playLeg: (([Coordinate], Double, TimeInterval) -> Void)?
 
     /// Whether the session driving the current leg is still up.
     ///
@@ -157,7 +160,7 @@ final class DayPlanRunner {
 
             activity = .travelling(legIndex: legIndex, arrival: leg.arrival)
             legIssuedAt = Date()
-            playLeg?(remaining, leg.speedKph)
+            playLeg?(remaining, leg.speedKph, untilArrival)
         }
     }
 

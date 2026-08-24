@@ -156,6 +156,15 @@ struct LocationSettingsPanel: View {
 
             GroupBox {
                 VStack(alignment: .leading) {
+                    Toggle("Drive realistically", isOn: $locationController.isRealisticDriving)
+
+                    Text(locationController.isRealisticDriving
+                         ? "Accelerates, brakes for corners and waits at lights. When a route has been worked out, the drive is fitted to the routing estimate, so it reflects the traffic there is right now. The speed below becomes the most it will do."
+                         : "Moves at exactly the speed below the whole way.")
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+
                     Slider(
                         value: $locationController.speed,
                         in: LocationController.minimumSpeed...LocationController.maximumSpeed,

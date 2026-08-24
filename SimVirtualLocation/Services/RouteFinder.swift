@@ -11,6 +11,11 @@ enum RouteFinder {
     struct Leg {
         let distance: CLLocationDistance
         let path: [Coordinate]
+
+        /// The routing service's own estimate, which already accounts for the traffic it
+        /// can see. Matching it is how a simulated drive reflects real conditions without
+        /// needing a traffic feed of our own.
+        let expectedTravelTime: TimeInterval
     }
 
     enum Failure: LocalizedError {
@@ -39,6 +44,6 @@ enum RouteFinder {
         let buffer = UnsafeBufferPointer(start: polyline.points(), count: polyline.pointCount)
         let path = buffer.map { Coordinate($0.coordinate) }
 
-        return Leg(distance: route.distance, path: path)
+        return Leg(distance: route.distance, path: path, expectedTravelTime: route.expectedTravelTime)
     }
 }
