@@ -39,7 +39,7 @@ enum DriveProfile {
         var stops: Bool = true
 
         /// Anything drawn at random comes from here, so a route is reproducible.
-        var seed: UInt64 = 0x5D8E'7C31'A2B4'96F1
+        var seed: UInt64 = 0x5D8E_7C31_A2B4_96F1
     }
 
     // MARK: - Physical constants
@@ -314,14 +314,14 @@ enum DriveProfile {
         private var state: UInt64
 
         init(seed: UInt64) {
-            state = seed == 0 ? 0x9E37'79B9'7F4A'7C15 : seed
+            state = seed == 0 ? 0x9E37_79B9_7F4A_7C15 : seed
         }
 
         mutating func next() -> UInt64 {
-            state &+= 0x9E37'79B9'7F4A'7C15
+            state &+= 0x9E37_79B9_7F4A_7C15
             var z = state
-            z = (z ^ (z >> 30)) &* 0xBF58'476D'1CE4'E5B9
-            z = (z ^ (z >> 27)) &* 0x94D0'49BB'1331'11EB
+            z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
+            z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
             return z ^ (z >> 31)
         }
     }
