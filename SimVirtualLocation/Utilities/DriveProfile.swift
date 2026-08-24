@@ -95,11 +95,43 @@ enum DriveProfile {
         settings: Settings,
         targetDuration: TimeInterval? = nil
     ) -> [Sample] {
+        var samples = profile(path: path, settings: settings)
+
+        guard let targetDuration, let natural = samples.last?.offset, natural > 0 else {
+            return samples
+        }
+
+        var scale = targetDuration / natural
+
+        // A drive that must be squashed harder than the clamp allows is one whose
+        // dwells the timetable cannot absorb — a leg due in half a minute has no room
+        // for a fifty-second red light. Dropping the stops (the corners still slow the
+        // car) gets the natural time near the constant-speed figure the timetable was
+        // built from, so the arrival stays honest instead of arbitrarily late.
+        if scale < scaleLimits.lowerBound, settings.stops {
+            var flowing = settings
+            flowing.stops = false
+            samples = profile(path: path, settings: flowing)
+            if let relaxed = samples.last?.offset, relaxed > 0 {
+                scale = targetDuration / relaxed
+            }
+        }
+
+        scale = min(max(scale, scaleLimits.lowerBound), scaleLimits.upperBound)
+        if abs(scale - 1) > 0.01 {
+            samples = samples.map { Sample(coordinate: $0.coordinate, offset: $0.offset * scale) }
+        }
+
+        return samples
+    }
+
+    /// The unscaled drive: ceilings, physics passes, integration.
+    private static func profile(path: [CLLocationCoordinate2D], settings: Settings) -> [Sample] {
         guard path.count > 1 else {
             return path.map { Sample(coordinate: $0, offset: 0) }
         }
 
-        let points = resample(path, spacing: spacing)
+        let points = Polyline.resample(path, step: spacing)
         guard points.count > 2 else {
             return points.enumerated().map { Sample(coordinate: $1, offset: Double($0)) }
         }
@@ -119,16 +151,7 @@ enum DriveProfile {
         }
 
         let speeds = feasibleSpeeds(ceilings: ceilings, stops: stopIndices)
-        var samples = integrate(points: points, speeds: speeds, dwell: dwell)
-
-        if let targetDuration, let last = samples.last?.offset, last > 0 {
-            let scale = min(max(targetDuration / last, scaleLimits.lowerBound), scaleLimits.upperBound)
-            if abs(scale - 1) > 0.01 {
-                samples = samples.map { Sample(coordinate: $0.coordinate, offset: $0.offset * scale) }
-            }
-        }
-
-        return samples
+        return integrate(points: points, speeds: speeds, dwell: dwell)
     }
 
     // MARK: - Steps
@@ -257,40 +280,6 @@ enum DriveProfile {
     }
 
     // MARK: - Geometry
-
-    private static func resample(
-        _ path: [CLLocationCoordinate2D],
-        spacing: CLLocationDistance
-    ) -> [CLLocationCoordinate2D] {
-        var cumulative: [CLLocationDistance] = [0]
-        for index in 1..<path.count {
-            cumulative.append(cumulative[index - 1] + CLLocation.distance(from: path[index - 1], to: path[index]))
-        }
-        guard let total = cumulative.last, total > spacing else { return path }
-
-        var result: [CLLocationCoordinate2D] = []
-        result.reserveCapacity(Int(total / spacing) + 2)
-
-        var travelled: CLLocationDistance = 0
-        var segment = 0
-        while travelled < total {
-            while segment < cumulative.count - 2, cumulative[segment + 1] < travelled { segment += 1 }
-            let start = cumulative[segment]
-            let span = cumulative[segment + 1] - start
-            let fraction = span > 0 ? (travelled - start) / span : 0
-            let from = path[segment]
-            let to = path[segment + 1]
-            result.append(
-                CLLocationCoordinate2D(
-                    latitude: from.latitude + (to.latitude - from.latitude) * fraction,
-                    longitude: from.longitude + (to.longitude - from.longitude) * fraction
-                )
-            )
-            travelled += spacing
-        }
-        if let last = path.last { result.append(last) }
-        return result
-    }
 
     private static func bearing(_ from: CLLocationCoordinate2D, _ to: CLLocationCoordinate2D) -> Double {
         let lat1 = from.latitude * .pi / 180

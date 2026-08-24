@@ -57,7 +57,8 @@ enum GPXRoute {
     /// Resample `coordinates` at a constant `speed` (metres per second) and write a GPX file
     /// into the temporary directory.
     static func write(coordinates: [CLLocationCoordinate2D], speed: CLLocationSpeed) throws -> URL {
-        let points = resample(coordinates, speed: max(speed, 0.1))
+        // One point per sampleInterval of travel at this speed.
+        let points = Polyline.resample(coordinates, step: max(speed, 0.1) * sampleInterval)
         return try write(points: points, interval: sampleInterval, name: "simulated route")
     }
 
@@ -67,8 +68,7 @@ enum GPXRoute {
     /// way, so a realistic drive arrives here with the spacing already decided — braking
     /// into corners, waiting at lights — and this only has to write it out.
     static func write(samples: [DriveProfile.Sample]) throws -> URL {
-        guard !samples.isEmpty else { throw Failure.emptyRoute }
-        return try write(
+        try write(
             stamps: samples.map { ($0.coordinate, $0.offset) },
             name: "realistic drive"
         )
@@ -89,11 +89,13 @@ enum GPXRoute {
         stamps: [(CLLocationCoordinate2D, TimeInterval)],
         name: String
     ) throws -> URL {
-        let points = stamps
-        guard !points.isEmpty else { throw Failure.emptyRoute }
+        guard !stamps.isEmpty else { throw Failure.emptyRoute }
 
         let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime]
+        // Fractional, because a realistic drive spaces points a few tenths of a second
+        // apart. Whole seconds collapsed runs of points onto one timestamp, so `play`
+        // injected them as a burst and slept a full second — 1 Hz movement, not a drive.
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         let start = Date()
 
         var gpx = """
@@ -103,7 +105,7 @@ enum GPXRoute {
 
         """
 
-        for (point, offset) in points {
+        for (point, offset) in stamps {
             let stamp = formatter.string(from: start.addingTimeInterval(offset))
             gpx += "    <trkpt lat=\"\(point.latitude)\" lon=\"\(point.longitude)\"><time>\(stamp)</time></trkpt>\n"
         }
@@ -126,52 +128,4 @@ enum GPXRoute {
         return url
     }
 
-    /// Walk the polyline at constant speed, emitting one coordinate per `sampleInterval`.
-    private static func resample(
-        _ coordinates: [CLLocationCoordinate2D],
-        speed: CLLocationSpeed
-    ) -> [CLLocationCoordinate2D] {
-        guard coordinates.count > 1 else { return coordinates }
-
-        var cumulative: [CLLocationDistance] = [0]
-        for index in 1..<coordinates.count {
-            let leg = CLLocation.distance(from: coordinates[index - 1], to: coordinates[index])
-            cumulative.append(cumulative[index - 1] + leg)
-        }
-
-        guard let total = cumulative.last, total > 0 else { return [coordinates[0]] }
-
-        let step = speed * sampleInterval
-        var result: [CLLocationCoordinate2D] = []
-        var travelled: CLLocationDistance = 0
-        var segment = 0
-
-        while travelled < total {
-            while segment < cumulative.count - 2, cumulative[segment + 1] < travelled {
-                segment += 1
-            }
-
-            let spanStart = cumulative[segment]
-            let span = cumulative[segment + 1] - spanStart
-            let fraction = span > 0 ? (travelled - spanStart) / span : 0
-
-            let from = coordinates[segment]
-            let to = coordinates[segment + 1]
-
-            result.append(
-                CLLocationCoordinate2D(
-                    latitude: from.latitude + (to.latitude - from.latitude) * fraction,
-                    longitude: from.longitude + (to.longitude - from.longitude) * fraction
-                )
-            )
-
-            travelled += step
-        }
-
-        if let last = coordinates.last {
-            result.append(last)
-        }
-
-        return result
-    }
 }

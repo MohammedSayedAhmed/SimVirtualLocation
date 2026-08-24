@@ -125,8 +125,19 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
 
     /// Route being played, and how much of it the device has already covered. Used to
     /// rebuild the remainder when the speed changes mid-route.
+    /// The route being played, resampled to a fine, even spacing at playback start.
+    /// Never rebased mid-route: restarts cut from it, they do not replace it.
     private var playbackCoordinates: [CLLocationCoordinate2D] = []
-    private var playbackIndex = 0
+
+    /// The last point the device reported playing. Restarting from here is exact
+    /// whatever the GPX's own point density was — an index into the route is not,
+    /// because the played file has a different number of points than the route.
+    private var playbackPosition: CLLocationCoordinate2D?
+
+    /// The seed and traffic estimate the route started with, so a mid-route restart
+    /// keeps the same lights and the same share of the same estimate.
+    private var playbackSeed: UInt64 = 1
+    private var playbackEstimate: TimeInterval = 0
     private var speedChangeWork: DispatchWorkItem?
 
     /// How often connected devices are rescanned. Scanning shells out to pymobiledevice3,
@@ -230,7 +241,7 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
                 }
 
                 let coordinate = CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
-                self.playbackIndex += 1
+                self.playbackPosition = coordinate
                 self.mapScene.removeSimulationAnnotationFromMap()
                 self.mapScene.placeSimulationAnnotation(at: coordinate)
             }
@@ -521,16 +532,26 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
         tracks = []
         tracksTimes = [:]
         playbackCoordinates = []
-        playbackIndex = 0
+        playbackPosition = nil
+        playbackSeed = 1
+        playbackEstimate = 0
     }
 
     /// Distance and journey time for the loaded route at the current speed.
+    /// Whether playback will actually drive realistically. The toggle only changes the
+    /// GPX that `play` walks, and only a physical iOS device is driven that way —
+    /// simulator and Android move on the constant-speed timer regardless, so promising
+    /// them traffic and lights would be describing a drive that will not happen.
+    var usesRealisticPlayback: Bool {
+        isRealisticDriving && platform == .iOS && deviceMode == .device
+    }
+
     var routeSummary: String? {
         guard routeDistance > 0 else { return nil }
 
         // A realistic drive takes as long as the routing estimate says, because that is
         // what it is fitted to. Quoting the constant-speed figure there would be wrong.
-        let usesEstimate = isRealisticDriving && routeExpectedTravelTime > 0
+        let usesEstimate = usesRealisticPlayback && routeExpectedTravelTime > 0
         let seconds = usesEstimate
             ? routeExpectedTravelTime
             : routeDistance / max(speed / 3.6, 0.1)
@@ -546,7 +567,7 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
             let average = routeDistance / max(routeExpectedTravelTime, 1) * 3.6
             return "\(distance) · \(duration) with current traffic · averages \(Int(average.rounded())) km/h"
         }
-        if isRealisticDriving {
+        if usesRealisticPlayback {
             return "\(distance) · about \(duration) · no traffic estimate, driving modelled"
         }
         return "\(distance) · about \(duration) at \(Int(speed.rounded())) km/h"
@@ -637,8 +658,11 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
             )
         ]
 
-        // A straight A-to-B run has no MKRoute, so measure the leg directly.
+        // A straight A-to-B run has no MKRoute, so measure the leg directly — and it has
+        // no traffic estimate either. A stale one from an earlier road route would
+        // otherwise stretch this run to fit a journey it has nothing to do with.
         routeDistance = CLLocation.distance(from: endpoints[0].coordinate, to: endpoints[1].coordinate)
+        routeExpectedTravelTime = 0
 
         isPaused = false
         invalidateState()
@@ -769,33 +793,40 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
             return
         }
 
-        let remaining = Array(playbackCoordinates.suffix(from: min(playbackIndex, playbackCoordinates.count)))
+        guard playbackCoordinates.count > 1 else { return }
+
+        // Cut at the point the device last reported, not at a counted index: the GPX
+        // holds a different number of points than the route (denser when realistic,
+        // speed-dependent when not), so an index into one means nothing in the other.
+        let cut = playbackPosition.map { Polyline.nearestVertex(to: $0, in: playbackCoordinates) } ?? 0
+        let remaining = Array(playbackCoordinates[cut...])
         guard remaining.count > 1 else { return }
 
         runner.stopRoutePlayback()
 
         do {
-            // The remainder gets the remaining share of the estimate, and the original
-            // route's seed, so resuming does not move every light.
-            let fraction = playbackCoordinates.isEmpty
-                ? 1.0
-                : Double(remaining.count) / Double(playbackCoordinates.count)
+            // The remainder gets the remaining share of the estimate the route STARTED
+            // with, measured against the whole route — playbackCoordinates is never
+            // rebased, so a second restart still shares out the same whole.
+            let cumulative = Polyline.cumulativeDistances(playbackCoordinates)
+            let total = cumulative.last ?? 0
+            let fraction = total > 0 ? 1 - (cumulative[cut] / total) : 1.0
+
             let url = try writeDriveGPX(
                 coordinates: remaining,
                 speedKph: speed,
-                expectedTravelTime: routeExpectedTravelTime,
+                expectedTravelTime: playbackEstimate,
                 fraction: fraction,
-                seed: Self.driveSeed(for: playbackCoordinates)
+                seed: playbackSeed
             )
             let connection = iosConnection
-            playbackCoordinates = remaining
-            playbackIndex = 0
 
             Task {
                 try await runner.playRoute(gpxURL: url, connection: connection, activityLabel: "Route playing", showAlert: showAlert)
             }
 
-            log("speed changed to \(Int(speed)) km/h — replaying \(remaining.count) remaining points")
+            let km = (total - cumulative[cut]) / 1000
+            log("speed changed to \(Int(speed)) km/h — replaying the remaining \(String(format: "%.1f", km)) km")
         } catch {
             showAlert(error.localizedDescription)
         }
@@ -1023,15 +1054,19 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
         let coordinates = routeCoordinates()
         guard coordinates.count > 1 else { return false }
 
-        playbackCoordinates = coordinates
-        playbackIndex = 0
+        // Ten-metre spacing, so "the vertex nearest the played position" is within ten
+        // metres of the truth. Raw route polylines put a whole straight between vertices.
+        playbackCoordinates = Polyline.resample(coordinates, step: 10)
+        playbackPosition = nil
+        playbackSeed = Self.driveSeed(for: coordinates)
+        playbackEstimate = routeExpectedTravelTime
 
         do {
             let url = try writeDriveGPX(
                 coordinates: coordinates,
                 speedKph: speed,
-                expectedTravelTime: routeExpectedTravelTime,
-                seed: Self.driveSeed(for: coordinates)
+                expectedTravelTime: playbackEstimate,
+                seed: playbackSeed
             )
             let connection = iosConnection
 
@@ -1436,23 +1471,44 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
 
         if let arrival = samples.last?.offset {
             let minutes = Int((arrival / 60).rounded())
-            log("realistic drive: \(samples.count) points, about \(minutes) min"
-                + (target != nil ? " (matched to the routing estimate, traffic included)" : " (no live estimate — modelled)"))
+            let matched = target.map { abs(arrival - $0) / $0 < 0.05 } ?? false
+            let how: String
+            if matched {
+                how = " (matched to the routing estimate, traffic included)"
+            } else if target != nil {
+                // The clamp refused a stretch or squash this extreme; the drive is as
+                // close as physics allows, and this is the duration it actually takes.
+                how = " (estimate and speed too far apart to match fully)"
+            } else {
+                how = " (no live estimate — modelled)"
+            }
+            log("realistic drive: \(samples.count) points, about \(minutes) min" + how)
         }
 
         return try GPXRoute.write(samples: samples)
     }
 
     /// A stable seed for one route, so its lights do not move between replays.
+    ///
+    /// Not `Hasher`: that is salted differently on every launch of the app, which would
+    /// have reshuffled the drive across a restart — including the day plan resuming
+    /// after one. SplitMix is the same mixer the profile's own generator uses.
     private static func driveSeed(for coordinates: [CLLocationCoordinate2D]) -> UInt64 {
         guard let first = coordinates.first, let last = coordinates.last else { return 1 }
-        var hasher = Hasher()
-        hasher.combine(Int(first.latitude * 10_000))
-        hasher.combine(Int(first.longitude * 10_000))
-        hasher.combine(Int(last.latitude * 10_000))
-        hasher.combine(Int(last.longitude * 10_000))
-        hasher.combine(coordinates.count)
-        return UInt64(bitPattern: Int64(hasher.finalize()))
+
+        func mix(_ state: UInt64, _ value: UInt64) -> UInt64 {
+            var z = (state ^ value) &+ 0x9E37_79B9_7F4A_7C15
+            z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
+            z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
+            return z ^ (z >> 31)
+        }
+
+        var seed: UInt64 = 0x5D8E_7C31_A2B4_96F1
+        for value in [first.latitude, first.longitude, last.latitude, last.longitude] {
+            seed = mix(seed, UInt64(bitPattern: Int64((value * 10_000).rounded())))
+        }
+        seed = mix(seed, UInt64(coordinates.count))
+        return seed == 0 ? 1 : seed
     }
 
     private func playPlanLeg(path: [Coordinate], speedKph: Double, duration: TimeInterval) {

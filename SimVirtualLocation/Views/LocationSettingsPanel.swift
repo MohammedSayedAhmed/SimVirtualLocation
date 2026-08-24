@@ -158,9 +158,11 @@ struct LocationSettingsPanel: View {
                 VStack(alignment: .leading) {
                     Toggle("Drive realistically", isOn: $locationController.isRealisticDriving)
 
-                    Text(locationController.isRealisticDriving
+                    Text(!locationController.isRealisticDriving
+                         ? "Moves at exactly the speed below the whole way."
+                         : locationController.usesRealisticPlayback
                          ? "Accelerates, brakes for corners and waits at lights. When a route has been worked out, the drive is fitted to the routing estimate, so it reflects the traffic there is right now. The speed below becomes the most it will do."
-                         : "Moves at exactly the speed below the whole way.")
+                         : "Applies when the target is a connected iPhone. The simulator and Android move at a constant speed either way.")
                         .font(.system(size: 11))
                         .foregroundColor(.secondary)
                         .fixedSize(horizontal: false, vertical: true)

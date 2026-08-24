@@ -31,6 +31,7 @@
 		AA00000B280DE000001D3559 /* CoordinateParsing.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00001B280DE000001D3559 /* CoordinateParsing.swift */; };
 		AA0000F1280DE000001D3559 /* GPXRoute.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000F2280DE000001D3559 /* GPXRoute.swift */; };
 		DEB8221FE4EE486D88AAC33B /* DriveProfile.swift in Sources */ = {isa = PBXBuildFile; fileRef = D709934D4F0F46878B8BCA64 /* DriveProfile.swift */; };
+		6A6A7C9943644A2D8664F9F1 /* Polyline.swift in Sources */ = {isa = PBXBuildFile; fileRef = 852A8F8D89F249E5BA3141ED /* Polyline.swift */; };
 		AA00000C280DE000001D3559 /* SimVirtualLocationAlertModifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00001C280DE000001D3559 /* SimVirtualLocationAlertModifier.swift */; };
 		AA0000F7280DE000001D3559 /* DeviceActivityView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000F8280DE000001D3559 /* DeviceActivityView.swift */; };
 		ED44823627B2590400C416C9 /* Info.plist in Resources */ = {isa = PBXBuildFile; fileRef = ED44823527B2590400C416C9 /* Info.plist */; };
@@ -81,6 +82,7 @@
 		AA00001B280DE000001D3559 /* CoordinateParsing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoordinateParsing.swift; sourceTree = "<group>"; };
 		AA0000F2280DE000001D3559 /* GPXRoute.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GPXRoute.swift; sourceTree = "<group>"; };
 		D709934D4F0F46878B8BCA64 /* DriveProfile.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DriveProfile.swift; sourceTree = "<group>"; };
+		852A8F8D89F249E5BA3141ED /* Polyline.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Polyline.swift; sourceTree = "<group>"; };
 		AA00001C280DE000001D3559 /* SimVirtualLocationAlertModifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SimVirtualLocationAlertModifier.swift; sourceTree = "<group>"; };
 		AA0000F8280DE000001D3559 /* DeviceActivityView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceActivityView.swift; sourceTree = "<group>"; };
 		ED44823527B2590400C416C9 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
@@ -138,6 +140,7 @@
 				AA00001B280DE000001D3559 /* CoordinateParsing.swift */,
 				AA0000F2280DE000001D3559 /* GPXRoute.swift */,
 				D709934D4F0F46878B8BCA64 /* DriveProfile.swift */,
+				852A8F8D89F249E5BA3141ED /* Polyline.swift */,
 			);
 			path = Utilities;
 			sourceTree = "<group>";
@@ -359,6 +362,7 @@
 				AA00000B280DE000001D3559 /* CoordinateParsing.swift in Sources */,
 				AA0000F1280DE000001D3559 /* GPXRoute.swift in Sources */,
 				DEB8221FE4EE486D88AAC33B /* DriveProfile.swift in Sources */,
+				6A6A7C9943644A2D8664F9F1 /* Polyline.swift in Sources */,
 				AA00000C280DE000001D3559 /* SimVirtualLocationAlertModifier.swift in Sources */,
 				AA0000F7280DE000001D3559 /* DeviceActivityView.swift in Sources */,
 			);
