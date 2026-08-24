@@ -261,6 +261,15 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
 
         // A `set` session ending means the device has given the point back. Only the
         // simulator/Android paths use `set` now, but the signal still matters there.
+        // The play process exiting on its own is the route ending. With that session
+        // gone the device is about to revert to real GPS, which is never allowed to
+        // pass silently — so the end of a route immediately becomes a held point.
+        runner.onPlaybackFinished = { [weak self] succeeded in
+            DispatchQueue.main.async {
+                self?.handleRoutePlaybackFinished(succeeded: succeeded)
+            }
+        }
+
         runner.onSessionEnded = { [weak self] reason in
             DispatchQueue.main.async {
                 guard let self, !self.usesPlaybackHold else { return }
@@ -833,6 +842,14 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
     }
 
     private func startMovementTimer() {
+        // Device playback needs no timer: the play session paces the route, the device
+        // reports each point it applies, and those reports drive the map. Running the
+        // constant-speed walk alongside it put two authors on one pin — the timer
+        // marched ahead at slider speed while the realistic drive braked and waited,
+        // and the pin snapped between the two several times a minute. The timer's
+        // other job, noticing the route has ended, is the play process exiting.
+        guard !isPlayingRoute else { return }
+
         timer?.invalidate()
         timer = Timer.scheduledTimer(withTimeInterval: timeScale, repeats: true) { [weak self] _ in
             self?.performMovement()
@@ -1083,6 +1100,9 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
     }
 
     private func performMovement() {
+        // Playback owns the pin; see startMovementTimer.
+        guard !isPlayingRoute else { return }
+
         guard isSimulating, tracks.count > 0, currentTrackIndex < tracks.count else {
             isSimulating = false
             isPaused = false
@@ -1402,7 +1422,9 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
         }
         // Whatever is driving the device now is about to be wrong: the plan decides
         // from the clock what should be happening, and issues it on its first tick.
-        runner.stopRoutePlayback()
+        // The whole simulation stops, not just the process — a route left marked as
+        // playing would claim the plan's own leg endings as its own.
+        stopSimulation()
         defaults.set(true, forKey: AppStorageKey.isRunningDayPlan)
         dayPlanRunner.start(daySchedule)
     }
@@ -1442,6 +1464,30 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
 
             self.dayPlanRunner.start(schedule)
         }
+    }
+
+    /// A route playback process ended without being told to.
+    ///
+    /// Only a user-started route is finished here. The stationary hold and day-plan
+    /// legs play through the same command, but the hold supervisor and the plan's tick
+    /// restart those themselves — and both run with `isPlayingRoute` false.
+    private func handleRoutePlaybackFinished(succeeded: Bool) {
+        guard isPlayingRoute else { return }
+
+        isPlayingRoute = false
+        isSimulating = false
+        isPaused = false
+        timer?.invalidate()
+        timer = nil
+        currentTrackIndex = 0
+
+        // Arrived or died, the device must not drift back to real GPS: hold wherever
+        // the drive got to. On a clean finish that is the destination.
+        guard let endpoint = playbackPosition ?? playbackCoordinates.last else { return }
+        log(succeeded
+            ? "route finished — holding the destination"
+            : "route playback ended early — holding the last played point")
+        holdLocation(endpoint)
     }
 
     /// Writes the GPX for a stretch of driving, realistic or constant-speed.

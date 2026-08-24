@@ -32,6 +32,12 @@ class Runner {
     /// whoever asked for that point has to re-apply it.
     var onSessionEnded: ((String?) -> Void)?
 
+    /// Route playback ended on its own — the GPX ran out or the process died — as
+    /// opposed to being stopped on purpose. The Bool is whether it exited cleanly.
+    /// An intentional stop never fires this: it is how a route being replaced avoids
+    /// being mistaken for a route that finished.
+    var onPlaybackFinished: ((Bool) -> Void)?
+
     /// Partial stderr line carried between reads, since chunks split arbitrarily.
     private var playbackLogBuffer = ""
 
@@ -360,19 +366,22 @@ class Runner {
             }
             guard !wasReaped else { return }
 
+            let succeeded = finished.terminationStatus == 0
+
             // A clean exit is not a failure: `play` logs every waypoint to stderr, so
             // surfacing stderr unconditionally would alert at the end of every route.
-            guard finished.terminationStatus != 0 else { return }
-
-            guard let errorData = try? errorPipe.fileHandleForReading.readToEnd() else { return }
-            let errorText = String(decoding: errorData, as: UTF8.self)
-            guard !errorText.isEmpty else { return }
-
-            self.onActivity?(.failed(Self.summarize(errorText)))
-
-            Task { @MainActor in
-                showAlert(errorText)
+            if !succeeded,
+               let errorData = try? errorPipe.fileHandleForReading.readToEnd() {
+                let errorText = String(decoding: errorData, as: UTF8.self)
+                if !errorText.isEmpty {
+                    self.onActivity?(.failed(Self.summarize(errorText)))
+                    Task { @MainActor in
+                        showAlert(errorText)
+                    }
+                }
             }
+
+            self.onPlaybackFinished?(succeeded)
         }
 
         // pymobiledevice3 logs every waypoint it applies to stderr. Parse them so the map
