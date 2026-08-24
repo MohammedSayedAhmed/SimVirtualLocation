@@ -644,6 +644,12 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
 
         log("Route segment distances: \(tracks.map { CLLocation.distance(from: $0.startPoint.coordinate, to: $0.endPoint.coordinate) })")
 
+        // The estimate belongs to the route on the map, so read it from there at the
+        // moment of starting: a straight A-to-B run in between zeroes the published
+        // copy, and simulating the road route again would otherwise run modelled-only.
+        routeDistance = route.distance
+        routeExpectedTravelTime = route.expectedTravelTime
+
         isPaused = false
         invalidateState()
         isPlayingRoute = startRoutePlayback()
