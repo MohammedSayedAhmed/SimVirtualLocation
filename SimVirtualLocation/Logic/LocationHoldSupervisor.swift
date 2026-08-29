@@ -89,6 +89,11 @@ final class LocationHoldSupervisor {
     }
 
     private var held: Coordinate?
+
+    /// When the current apply was asked for, so an apply still starting up is told apart
+    /// from one that never arrived.
+    private var applyStartedAt: Date?
+
     private var timer: Timer?
     private var activity: NSObjectProtocol?
     private var wakeObserver: NSObjectProtocol?
@@ -119,6 +124,7 @@ final class LocationHoldSupervisor {
         let point = Coordinate(coordinate)
         held = point
         state = .applying(point)
+        applyStartedAt = Date()
 
         beginActivity()
         restartTimer()
@@ -131,6 +137,7 @@ final class LocationHoldSupervisor {
     func release() {
         guard held != nil else { return }
         held = nil
+        applyStartedAt = nil
         timer?.invalidate()
         timer = nil
         endActivity()
@@ -141,6 +148,7 @@ final class LocationHoldSupervisor {
     /// The device confirmed the point is applied.
     func confirmApplied() {
         guard let held else { return }
+        applyStartedAt = nil
         state = .held(held, confirmedAt: Date())
     }
 
@@ -194,9 +202,32 @@ final class LocationHoldSupervisor {
             return
         }
 
+        // An apply that has been asked for but whose session has not come up yet also
+        // counts as in hand. Establishing a tunnel takes longer than the shortest
+        // keep-alive interval, so without this the timer fired while the first apply was
+        // still starting, saw no live session, and asked for a second one — two sessions
+        // launched a second apart, which is exactly what a live session check exists to
+        // prevent. Only a keep-alive defers; a session ending, a wake or a reconnect are
+        // evidence the in-flight apply is not coming.
+        if trigger == .keepAlive, case .applying = state, !applyIsOverdue {
+            return
+        }
+
         log?("Applying \(held.formatted) (\(trigger.rawValue))")
         state = .applying(held)
+        applyStartedAt = Date()
         apply?(held.clCoordinate)
+    }
+
+    /// How long an apply is given to produce a session before it is assumed lost.
+    /// Longer than a tunnel takes to come up, shorter than anyone would tolerate being
+    /// on real GPS without the app trying again.
+    private static let applyTimeout: TimeInterval = 45
+
+    /// Whether the in-flight apply has been waiting long enough to be written off.
+    private var applyIsOverdue: Bool {
+        guard let applyStartedAt else { return true }
+        return Date().timeIntervalSince(applyStartedAt) > Self.applyTimeout
     }
 
     // MARK: - Private

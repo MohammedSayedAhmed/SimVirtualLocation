@@ -28,9 +28,17 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
     }
 
     @Published var transportType: TransportType = .driving
+    /// Simulator or a real device.
+    ///
+    /// Persisted: this was the only target setting that was not, so every launch began in
+    /// simulator mode however the app was actually being used. On a Mac without Xcode
+    /// that meant the first location set of every session went to a simulator that does
+    /// not exist, and the background scan spent its time shelling out to a missing
+    /// `simctl`, until the mode was flipped back by hand.
     @Published var deviceMode: DeviceMode = .simulator {
         didSet {
             guard deviceMode != oldValue else { return }
+            defaults.set(deviceMode.rawValue, forKey: AppStorageKey.deviceMode)
             Task { @MainActor [weak self] in
                 await self?.refreshDevices(silently: true)
             }
@@ -210,6 +218,12 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
     private var timer: Timer?
     private var wasHoldLost = false
 
+    /// The last CoreLocation failure text, so an error it retries forever is logged once.
+    private var lastLocationManagerError: String?
+
+    /// How many times the newest log line has repeated, so a failure on a timer collapses.
+    private var repeatedLogCount = 0
+
     @Published var savedLocations: [Location] = []
 
     // MARK: - Init
@@ -279,11 +293,23 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
 
         configureLocationHold()
 
-        // After the rest of init, so device discovery and settings are already in place.
-        DispatchQueue.main.async { [weak self] in
-            self?.restoreHeldPointIfNeeded()
-            self?.resumeDayPlanIfNeeded()
+        // Stored settings are read here, synchronously, because everything below depends
+        // on knowing what the target is. They used to be restored inside the Task below,
+        // behind an `await refreshDevices()`, while the held point was restored on the
+        // next runloop turn — so the point went back on before the app knew whether it
+        // was pointed at a simulator or a phone, and a device hold resumed down the
+        // simulator path with the phone left on real GPS under a UI saying "Holding".
+        if let storedPlatform = AppPlatform(rawValue: defaults.integer(forKey: AppStorageKey.platform)) {
+            platform = storedPlatform
         }
+        if let storedDeviceMode = DeviceMode(rawValue: defaults.integer(forKey: AppStorageKey.deviceMode)) {
+            deviceMode = storedDeviceMode
+        }
+        adbPath = defaults.string(forKey: AppStorageKey.adbPath) ?? ""
+        adbDeviceId = defaults.string(forKey: AppStorageKey.adbDeviceId) ?? ""
+        isEmulator = defaults.bool(forKey: AppStorageKey.isEmulator)
+        xcodePath = defaults.string(forKey: AppStorageKey.xcodePath) ?? "/Applications/Xcode.app"
+        savedLocations = savedLocationsStore.load()
 
         runner.log = { [weak self] message in
             DispatchQueue.main.async {
@@ -294,7 +320,10 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
         locationManager.delegate = self
         locationManager.desiredAccuracy = kCLLocationAccuracyBest
         locationManager.distanceFilter = kCLDistanceFilterNone
-        locationManager.startUpdatingLocation()
+        // One fix, not a continuous stream. The Mac's own position is wanted twice —
+        // to centre the map at launch and when "My Mac" is pressed — and leaving updates
+        // running meant CoreLocation retried indefinitely, logging a failure every few
+        // minutes for the entire time the app was open.
         locationManager.requestLocation()
 
         mapView.viewHolder.clickAction = { [weak self] gesture in
@@ -308,15 +337,10 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
             await refreshDevices()
             startDeviceMonitoring()
 
-            if let p = AppPlatform(rawValue: defaults.integer(forKey: AppStorageKey.platform)) {
-                platform = p
-            }
-            adbPath = defaults.string(forKey: AppStorageKey.adbPath) ?? ""
-            adbDeviceId = defaults.string(forKey: AppStorageKey.adbDeviceId) ?? ""
-            isEmulator = defaults.bool(forKey: AppStorageKey.isEmulator)
-            xcodePath = defaults.string(forKey: AppStorageKey.xcodePath) ?? "/Applications/Xcode.app"
-
-            savedLocations = savedLocationsStore.load()
+            // Only now: the target settings are already in place from init, and the
+            // device list is known, so a resumed hold goes to the right place.
+            restoreHeldPointIfNeeded()
+            resumeDayPlanIfNeeded()
         }
     }
 
@@ -443,6 +467,10 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
             // A leg in progress was being played by a session that died with the cable,
             // and unlike a held point nothing else would notice.
             dayPlanRunner.resume()
+            // Nor did a route. A held point came back by itself and a day plan came back
+            // by itself, but a route stayed paused for as long as the app was left open,
+            // with the device on its real GPS the whole time.
+            resumeRouteAfterReconnect()
         } else {
             activity = .idle
         }
@@ -472,6 +500,11 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
         timer = nil
         isPaused = true
         activity = .failed("Device disconnected — simulation paused")
+
+        // A lost hold beeps and asks for attention because nobody is watching the Mac
+        // while a location is being held. A route losing its device leaves the phone on
+        // real GPS just the same, and said so only in a panel nobody was looking at.
+        announceLoss()
     }
 
     /// Rescan for devices on a timer so connecting a phone is noticed without the user
@@ -498,7 +531,11 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
 
     func setCurrentLocation() {
         guard let location = locationManager.location?.coordinate else {
-            showAlert("Current location is unavailable")
+            // Nothing cached: ask for one now rather than reporting failure. Updates are
+            // not left running, so the last fix can be older than CoreLocation keeps.
+            log("no Mac location cached — asking CoreLocation for one")
+            locationManager.requestLocation()
+            showAlert("Working out where this Mac is — try again in a moment.")
             return
         }
         holdLocation(location)
@@ -985,11 +1022,16 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
         )
     }
 
+    /// Puts a message in front of the user.
+    ///
+    /// This used to stop any running simulation as a side effect, which was invisible
+    /// from the call sites: it is handed to device discovery and to every spawned
+    /// process, so a background rescan or a stray line on a helper's stderr could end a
+    /// drive that was going perfectly well. Callers that mean to stop now say so.
     func showAlert(_ text: String) {
         DispatchQueue.main.async {
             self.alertText = text
             self.showingAlert = true
-            self.isSimulating = false
             self.log("Alert: \(text)")
         }
     }
@@ -1039,7 +1081,13 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
     }
 
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
-        log(error.localizedDescription)
+        // This is the Mac's own position failing, not the device's, and CoreLocation
+        // retries on its own. Saying so once is useful; saying so every few minutes for
+        // hours pushed everything else out of a capped log.
+        let description = error.localizedDescription
+        guard description != lastLocationManagerError else { return }
+        lastLocationManagerError = description
+        log("Mac's own location is unavailable: \(description)")
     }
 
     // MARK: - Private
@@ -1212,8 +1260,18 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
             return self.runner.isPlaybackRunning
         }
 
+        // Whether there is anything to apply a point to at all. This used to answer
+        // "yes" for every target that is not a play session, so a hold aimed at a
+        // simulator that was not running re-applied and re-alerted on every tick
+        // forever, and reported itself as held in between.
         locationHold.isTargetAvailable = { [weak self] in
-            guard let self, self.usesPlaybackHold else { return true }
+            guard let self else { return false }
+            if self.platform == .android {
+                return !self.adbDeviceId.isEmpty && !self.adbPath.isEmpty
+            }
+            if self.deviceMode == .simulator {
+                return self.bootedSimulators.contains { !$0.id.isEmpty }
+            }
             return !self.selectedDevice.isEmpty
         }
 
@@ -1240,7 +1298,11 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
         }
         guard !wasHoldLost else { return }
         wasHoldLost = true
+        announceLoss()
+    }
 
+    /// Says out loud that the device is no longer where the app claims it is.
+    private func announceLoss() {
         NSSound.beep()
         _ = NSApplication.shared.requestUserAttention(.criticalRequest)
     }
@@ -1472,6 +1534,35 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
         }
     }
 
+    /// Picks a route back up after the device came back.
+    ///
+    /// Playback is re-issued from the last point the device reported, so an interrupted
+    /// drive continues rather than restarting. A route that had already reached its end
+    /// when the device went away has nothing left to drive, so its endpoint is held —
+    /// which is what would have happened had the device stayed.
+    private func resumeRouteAfterReconnect() {
+        guard isSimulating, isPlayingRoute else { return }
+
+        let remainingCount = playbackPosition
+            .map { playbackCoordinates.count - Polyline.nearestVertex(to: $0, in: playbackCoordinates) }
+            ?? playbackCoordinates.count
+
+        guard remainingCount > 1 else {
+            log("the route had finished while the device was away — holding its endpoint")
+            isPlayingRoute = false
+            isSimulating = false
+            isPaused = false
+            if let endpoint = playbackPosition ?? playbackCoordinates.last {
+                holdLocation(endpoint)
+            }
+            return
+        }
+
+        log("device is back — resuming the route from where it stopped")
+        isPaused = false
+        restartPlaybackFromCurrentPosition()
+    }
+
     /// A route playback process ended without being told to.
     ///
     /// Only a user-started route is finished here. The stationary hold and day-plan
@@ -1479,6 +1570,16 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
     /// restart those themselves — and both run with `isPlayingRoute` false.
     private func handleRoutePlaybackFinished(succeeded: Bool) {
         guard isPlayingRoute else { return }
+
+        // The device going away is what ended this, not the road running out. Holding
+        // now would spawn a session against a connection that no longer exists, and
+        // would throw away the route in the process. Stay paused; the reconnect picks
+        // it up, and holds the endpoint there if the drive had in fact finished.
+        guard !connectedDevices.isEmpty else {
+            isPaused = true
+            log("route playback stopped with the device away — it resumes when the device returns")
+            return
+        }
 
         isPlayingRoute = false
         isSimulating = false
@@ -1672,6 +1773,17 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
             guard let self else { return }
             self.log("Could not apply the location: \(error.localizedDescription)")
             self.activity = .failed(error.localizedDescription)
+
+            // showAlert used to end the simulation for every alert, wherever it came
+            // from. A location that cannot be applied is the case that actually meant,
+            // so it stops here instead — where it is about this device, not about a
+            // background rescan that happened to have something to say.
+            if self.isSimulating, !self.isPlayingRoute {
+                self.isSimulating = false
+                self.isPaused = false
+                self.timer?.invalidate()
+                self.timer = nil
+            }
         }
     }
 
@@ -1716,9 +1828,14 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
                 }
             }
         } else {
-            if bootedSimulators.isEmpty {
+            // Nothing to send it to. This used to alert and then carry on, logging
+            // "set simulator location" for a simulator that does not exist, which read
+            // as a location that had been applied.
+            guard !bootedSimulators.isEmpty else {
                 isSimulating = false
+                locationHold.targetLost(reason: SimulatorFetchError.noBootedSimulators.description)
                 showAlert(SimulatorFetchError.noBootedSimulators.description)
+                return
             }
             runner.runOnSimulator(
                 location: location,
@@ -1775,6 +1892,22 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
         let entry = LogEntry(date: now, message: message, stamp: Self.logTimeFormatter.string(from: now))
         Self.onMain { [weak self] in
             guard let self else { return }
+
+            // A failure that repeats on a timer — a missing simctl probed every three
+            // seconds, say — would otherwise push every other line out of the capped log
+            // within hours, which is the opposite of what a failure log is for. The line
+            // stays, and keeps its count, rather than being dropped.
+            if let first = self.logs.first, first.message == entry.message {
+                self.repeatedLogCount += 1
+                self.logs[0] = LogEntry(
+                    date: now,
+                    message: "\(entry.message)  (\(self.repeatedLogCount + 1)x, latest \(entry.stamp))",
+                    stamp: first.stamp
+                )
+                return
+            }
+            self.repeatedLogCount = 0
+
             self.logs.insert(entry, at: 0)
             // Bounded, because nothing else ever shrinks this and the pane redraws it.
             // Deliberately generous: at the noisiest polling rate a small cap would be a

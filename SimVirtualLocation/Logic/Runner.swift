@@ -67,6 +67,16 @@ class Runner {
     /// Long-lived `simulate-location play` process for route playback, if one is running.
     private var routePlaybackTask: Process?
 
+    /// Which launch is the current one.
+    ///
+    /// `playRoute` stops the old session, then suspends for however long the tunnel takes
+    /// to come up, and only claims `routePlaybackTask` once the process is running. Two
+    /// calls overlapping in that window each found nothing to stop and each spawned —
+    /// one of them untracked, so nothing could ever kill it, and two live sessions
+    /// asserted locations at each other for the rest of the run. A launch that is no
+    /// longer the newest by the time its tunnel is ready now stands down instead.
+    private var playbackGeneration: UInt64 = 0
+
     // MARK: - Internal Methods
 
     /// `true` while a `simulate-location set` process is still holding a point open.
@@ -345,6 +355,11 @@ class Runner {
         self.isStopped = false
         self.playbackLogBuffer = ""
 
+        let generation = runnerQueue.sync { () -> UInt64 in
+            playbackGeneration &+= 1
+            return playbackGeneration
+        }
+
         let task = try await self.taskForIOS(
             args: ["developer", "dvt", "simulate-location", "play", gpxURL.path] + connectionArguments,
             showAlert: showAlert
@@ -411,6 +426,15 @@ class Runner {
 
                 self.onLocationPlayed?(latitude, longitude)
             }
+        }
+
+        // Someone else started a session while this one was waiting for its tunnel.
+        // They stopped nothing of ours (we had not claimed the slot yet), so spawning
+        // now would leave two live sessions with only one of them tracked.
+        let superseded = runnerQueue.sync { generation != playbackGeneration }
+        guard !superseded else {
+            self.log?("skipped a playback launch that a newer one replaced")
+            return
         }
 
         onActivity?(.working(connection.progressDescription))

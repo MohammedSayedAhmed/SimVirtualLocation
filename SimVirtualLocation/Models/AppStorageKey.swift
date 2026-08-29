@@ -6,6 +6,9 @@ enum AppStorageKey {
     static let xcodePath = "xcode_path"
     /// Legacy name — stores `AppPlatform.rawValue`.
     static let platform = "device_type"
+
+    /// Stores `DeviceMode.rawValue` — simulator or a real device.
+    static let deviceMode = "device_mode"
     static let adbPath = "adb_path"
     static let adbDeviceId = "adb_device_id"
     static let isEmulator = "is_emulator"

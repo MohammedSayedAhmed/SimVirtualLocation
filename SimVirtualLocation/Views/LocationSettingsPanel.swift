@@ -95,12 +95,18 @@ struct LocationSettingsPanel: View {
                 }, label: {
                     Text("Simulate route").frame(maxWidth: .infinity)
                 })
+                // Disabled while one is running. A drive spends its first seconds
+                // building a tunnel with nothing visibly happening, so pressing again
+                // looked like the thing to do — and each press tore down the session
+                // that was almost ready and started the wait over.
+                .disabled(locationController.isSimulating)
 
                 Button(action: {
                     locationController.simulateFromAToB()
                 }, label: {
                     Text("Simulate from A to B").frame(maxWidth: .infinity)
                 })
+                .disabled(locationController.isSimulating)
 
                 Button(action: {
                     locationController.togglePauseSimulation()
