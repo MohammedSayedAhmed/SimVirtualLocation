@@ -1159,7 +1159,10 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
                 try await runner.playRoute(gpxURL: url, connection: connection, activityLabel: "Route playing", showAlert: showAlert)
             }
 
-            log("route playback started (\(coordinates.count) points)")
+            // The count is the route's own points, not the drive's — a realistic drive
+            // writes many times more — and the session is still only being asked for
+            // here, since the tunnel takes seconds to come up. Say what is true.
+            log("starting the drive — connecting to the device")
             return true
         } catch {
             showAlert(error.localizedDescription)
