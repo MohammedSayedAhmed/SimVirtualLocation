@@ -24,6 +24,7 @@ final class LocationHoldSupervisor {
         case sessionEnded = "session ended"
         case systemWake = "Mac woke from sleep"
         case manual = "manual re-apply"
+        case targetChanged = "target changed"
         case deviceReconnected = "device reconnected"
     }
 
@@ -64,6 +65,9 @@ final class LocationHoldSupervisor {
             }
         }
     }
+
+    /// Whether a point is currently being kept applied.
+    var isHolding: Bool { held != nil }
 
     private(set) var state: State = .idle {
         didSet {

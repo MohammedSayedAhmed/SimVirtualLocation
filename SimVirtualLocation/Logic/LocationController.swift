@@ -39,6 +39,7 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
         didSet {
             guard deviceMode != oldValue else { return }
             defaults.set(deviceMode.rawValue, forKey: AppStorageKey.deviceMode)
+            retargetHold()
             Task { @MainActor [weak self] in
                 await self?.refreshDevices(silently: true)
             }
@@ -48,12 +49,21 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
         didSet { defaults.set(xcodePath, forKey: AppStorageKey.xcodePath) }
     }
 
-    @Published var useRSD: Bool = true
+    @Published var useRSD: Bool = true {
+        didSet {
+            guard useRSD != oldValue else { return }
+            retargetHold()
+        }
+    }
 
     /// Establish the iOS 17+ tunnel in-process instead of relying on a tunnel the user starts
     /// with `sudo` in Terminal. Removes the need for RSD Address / RSD Port entirely.
     @Published var useUserspace: Bool = true {
-        didSet { defaults.set(useUserspace, forKey: AppStorageKey.useUserspace) }
+        didSet {
+            defaults.set(useUserspace, forKey: AppStorageKey.useUserspace)
+            guard useUserspace != oldValue else { return }
+            retargetHold()
+        }
     }
 
     /// True while an entire route is being replayed by a single `simulate-location play`
@@ -164,7 +174,11 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
 
     @Published var showingAlert: Bool = false
     @Published var platform: AppPlatform = .iOS {
-        didSet { defaults.set(platform.rawValue, forKey: AppStorageKey.platform) }
+        didSet {
+            defaults.set(platform.rawValue, forKey: AppStorageKey.platform)
+            guard platform != oldValue else { return }
+            retargetHold()
+        }
     }
     @Published var adbPath: String = ""
     @Published var adbDeviceId: String = ""
@@ -1532,6 +1546,20 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
 
             self.dayPlanRunner.start(schedule)
         }
+    }
+
+    /// The target changed while a point was being held: put it on the new one now.
+    ///
+    /// Which target a held point goes to is decided each time it is applied, not when
+    /// the hold starts, so changing the target used to leave the point on the old one
+    /// until the next keep-alive tick happened to move it — with the old session still
+    /// running, and nothing saying the two disagreed. The old session is torn down and
+    /// the point re-issued immediately instead.
+    private func retargetHold() {
+        guard locationHold.isHolding else { return }
+        log("target changed while holding a point — re-applying it to the new target")
+        runner.stopRoutePlayback()
+        locationHold.reapply(trigger: .targetChanged)
     }
 
     /// Picks a route back up after the device came back.
