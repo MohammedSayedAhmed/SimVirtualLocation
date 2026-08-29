@@ -90,17 +90,26 @@ class Runner {
     func stop() {
         stopRoutePlayback()
 
-        // Record before terminating. The termination handlers run asynchronously and
-        // consult this set; clearing it here let a routine SIGTERM traceback reach the
-        // user as an alert. Each handler removes its own PID, so the set drains itself.
-        runnerQueue.sync {
-            for task in tasks where task.isRunning {
+        // Taking the list and clearing it happen together, under the queue that owns it.
+        // Terminating and clearing as two separate unsynchronised steps meant a task
+        // appended between them was dropped from tracking without being killed — a
+        // helper still asserting a location after the user pressed Stop.
+        //
+        // Reaping is recorded before terminating: the termination handlers run
+        // asynchronously and consult this set, and clearing it here let a routine SIGTERM
+        // traceback reach the user as an alert. Each handler removes its own PID, so the
+        // set drains itself.
+        let live: [Process] = runnerQueue.sync {
+            let running = tasks.filter { $0.isRunning }
+            for task in running {
                 reapedPIDs.insert(task.processIdentifier)
             }
+            tasks = []
+            return running
         }
 
-        tasks.forEach { $0.terminate() }
-        tasks = []
+        // Off the queue, for the same reason as stopRoutePlayback.
+        live.forEach { $0.terminate() }
 
         isStopped = true
     }
@@ -408,7 +417,14 @@ class Runner {
         errorPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
             guard let self = self else { return }
             let chunk = handle.availableData
-            guard !chunk.isEmpty else { return }
+            // Empty means end of file: let the handle go rather than holding this
+            // closure — and the runner with it — for every playback ever started.
+            // The termination handler reads what is left with readToEnd, which still
+            // works on a handle whose readability callback has been released.
+            guard !chunk.isEmpty else {
+                handle.readabilityHandler = nil
+                return
+            }
 
             self.playbackLogBuffer += String(decoding: chunk, as: UTF8.self)
             var lines = self.playbackLogBuffer.components(separatedBy: "\n")
@@ -488,21 +504,36 @@ class Runner {
     /// Terminate route playback, if running. Its stderr is suppressed because a SIGTERM
     /// traceback here is expected rather than an error worth surfacing.
     func stopRoutePlayback() {
-        guard let task = routePlaybackTask else { return }
-        routePlaybackTask = nil
+        // The generation moves on whether or not there is a process to kill, and that is
+        // the whole point: a launch still waiting for its tunnel has not claimed the slot
+        // yet, so there is nothing here to terminate — but it must not be allowed to
+        // start once its tunnel is ready. Returning early left it free to do exactly
+        // that, and a tunnel takes long enough that Stop routinely lands inside the gap.
+        let doomed: Process? = runnerQueue.sync {
+            playbackGeneration &+= 1
 
-        guard task.isRunning else { return }
-        runnerQueue.sync { _ = reapedPIDs.insert(task.processIdentifier) }
+            guard let task = routePlaybackTask else { return nil }
+            routePlaybackTask = nil
+
+            guard task.isRunning else { return nil }
+            reapedPIDs.insert(task.processIdentifier)
+            return task
+        }
+
+        // Signalling happens off the queue: terminating wakes a termination handler that
+        // wants the queue itself, and holding it across the signal makes that handler
+        // wait on us for no reason.
+        guard let doomed else { return }
 
         // A suspended child would not act on SIGTERM until resumed, so continue it first.
-        kill(task.processIdentifier, SIGCONT)
-        task.terminate()
+        kill(doomed.processIdentifier, SIGCONT)
+        doomed.terminate()
     }
 
     /// Whether a route playback process is currently alive. False once its tunnel has
     /// died, in which case resuming means rebuilding the remainder rather than SIGCONT.
     var isPlaybackRunning: Bool {
-        routePlaybackTask?.isRunning == true
+        runnerQueue.sync { routePlaybackTask?.isRunning == true }
     }
 
     /// Suspend route playback where it stands.
@@ -511,7 +542,7 @@ class Runner {
     /// up exactly where it left off — no need to regenerate the route or start over.
     @discardableResult
     func pauseRoutePlayback() -> Bool {
-        guard let task = routePlaybackTask, task.isRunning else { return false }
+        guard let task = runnerQueue.sync(execute: { routePlaybackTask }), task.isRunning else { return false }
         guard kill(task.processIdentifier, SIGSTOP) == 0 else { return false }
         onActivity?(.working("Route paused"))
         return true
@@ -519,7 +550,7 @@ class Runner {
 
     @discardableResult
     func resumeRoutePlayback() -> Bool {
-        guard let task = routePlaybackTask, task.isRunning else { return false }
+        guard let task = runnerQueue.sync(execute: { routePlaybackTask }), task.isRunning else { return false }
         guard kill(task.processIdentifier, SIGCONT) == 0 else { return false }
         onActivity?(.active(playbackActivityLabel))
         return true
