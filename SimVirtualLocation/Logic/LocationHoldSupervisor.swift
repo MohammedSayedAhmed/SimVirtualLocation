@@ -43,6 +43,9 @@ final class LocationHoldSupervisor {
     /// gone away — asking separately is the only way to tell those apart.
     var isTargetAvailable: (() -> Bool)?
 
+    /// Why the target cannot be reached, in words that name the actual target.
+    var unavailableReason: (() -> String)?
+
     var onStateChange: ((State) -> Void)?
     var log: ((String) -> Void)?
 
@@ -193,7 +196,12 @@ final class LocationHoldSupervisor {
         // old session's process proves otherwise — so say so rather than reporting a
         // hold that is not in force.
         if isTargetAvailable?() == false {
-            state = .failed(held, reason: "Device disconnected — the point goes back on as soon as it returns.")
+            // The reason comes from whoever knows what the target is. Saying "device
+            // disconnected" for a simulator that was never booted, or for adb that has
+            // no path set, sends people looking for a cable that was never the problem.
+            let reason = unavailableReason?()
+                ?? "The target is unavailable — the point goes back on as soon as it returns."
+            state = .failed(held, reason: reason)
             return
         }
 

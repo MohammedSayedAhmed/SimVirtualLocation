@@ -13,6 +13,9 @@ enum AppStorageKey {
     static let adbDeviceId = "adb_device_id"
     static let isEmulator = "is_emulator"
     static let useUserspace = "use_userspace_tunnel"
+
+    /// Whether iOS 17+ devices are reached over an RSD tunnel.
+    static let useRSD = "use_rsd"
     static let keepLocationApplied = "keep_location_applied"
     static let keepAliveInterval = "keep_alive_interval"
 

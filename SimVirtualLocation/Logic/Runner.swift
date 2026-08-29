@@ -77,6 +77,9 @@ class Runner {
     /// longer the newest by the time its tunnel is ready now stands down instead.
     private var playbackGeneration: UInt64 = 0
 
+    /// The generation that currently owns `routePlaybackTask`.
+    private var claimedGeneration: UInt64 = 0
+
     // MARK: - Internal Methods
 
     /// `true` while a `simulate-location set` process is still holding a point open.
@@ -431,8 +434,16 @@ class Runner {
         // Someone else started a session while this one was waiting for its tunnel.
         // They stopped nothing of ours (we had not claimed the slot yet), so spawning
         // now would leave two live sessions with only one of them tracked.
-        let superseded = runnerQueue.sync { generation != playbackGeneration }
-        guard !superseded else {
+        //
+        // Checking and claiming happen together, under the queue: testing first and
+        // claiming afterwards leaves a window in which a third launch can slip between
+        // them, which is the same race one step smaller.
+        let claimed = runnerQueue.sync { () -> Bool in
+            guard generation == playbackGeneration else { return false }
+            claimedGeneration = generation
+            return true
+        }
+        guard claimed else {
             self.log?("skipped a playback launch that a newer one replaced")
             return
         }
@@ -441,7 +452,23 @@ class Runner {
 
         do {
             try task.run()
-            self.routePlaybackTask = task
+
+            // Check and claim in one step. Testing ownership and then assigning leaves a
+            // window for a third launch to slip between them — the same race, smaller.
+            let stillOurs = runnerQueue.sync { () -> Bool in
+                guard claimedGeneration == generation else { return false }
+                self.routePlaybackTask = task
+                return true
+            }
+
+            if !stillOurs {
+                // A newer launch took over while this one was starting. Retire this
+                // process rather than leave it running with nothing tracking it.
+                self.log?("a newer playback launch took over while this one was starting")
+                runnerQueue.sync { _ = reapedPIDs.insert(task.processIdentifier) }
+                kill(task.processIdentifier, SIGCONT)
+                task.terminate()
+            }
         } catch {
             Task { @MainActor in
                 showAlert(error.localizedDescription)

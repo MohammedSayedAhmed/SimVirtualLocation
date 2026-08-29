@@ -51,6 +51,7 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
 
     @Published var useRSD: Bool = true {
         didSet {
+            defaults.set(useRSD, forKey: AppStorageKey.useRSD)
             guard useRSD != oldValue else { return }
             retargetHold()
         }
@@ -255,6 +256,12 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
 
         if defaults.object(forKey: AppStorageKey.useUserspace) != nil {
             useUserspace = defaults.bool(forKey: AppStorageKey.useUserspace)
+        }
+        // Presence-guarded: both of these default to true, and `bool(forKey:)` answers
+        // false for a key that was never written, so reading them unguarded would turn
+        // them off for everyone who had never touched them.
+        if defaults.object(forKey: AppStorageKey.useRSD) != nil {
+            useRSD = defaults.bool(forKey: AppStorageKey.useRSD)
         }
 
         runner.onLocationPlayed = { [weak self] latitude, longitude in
@@ -1290,6 +1297,20 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
                 return self.bootedSimulators.contains { !$0.id.isEmpty }
             }
             return !self.selectedDevice.isEmpty
+        }
+
+        // Names the target that is missing, so a hold that cannot be applied says why in
+        // terms of the thing the user would actually go and check.
+        locationHold.unavailableReason = { [weak self] in
+            guard let self else { return "The target is unavailable." }
+            if self.platform == .android {
+                if self.adbPath.isEmpty { return "No adb path set — the point goes back on once one is." }
+                return "No Android device id set — the point goes back on once one is."
+            }
+            if self.deviceMode == .simulator {
+                return "No simulator is booted — the point goes back on as soon as one is."
+            }
+            return "Device disconnected — the point goes back on as soon as it returns."
         }
 
         locationHold.log = { [weak self] message in
