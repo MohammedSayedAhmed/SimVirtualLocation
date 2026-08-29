@@ -95,82 +95,9 @@ struct ContentView: View {
                 }
                 .modifier(SimVirtualLocationAlertModifier(isPresented: $locationController.showingAlert, text: locationController.alertText))
 
-            VStack(spacing: 0) {
-                // Header с кнопкой скрытия/показа логов
-                HStack {
-                    Button(action: {
-                        withAnimation(.easeInOut(duration: 0.3)) {
-                            locationController.showLogs.toggle()
-                        }
-                    }) {
-                        HStack(spacing: 4) {
-                            Image(systemName: locationController.showLogs ? "chevron.down" : "chevron.right")
-                                .font(.system(size: 12, weight: .medium))
-                            Text("Logs")
-                                .font(.system(size: 13, weight: .medium))
-                        }
-                        .foregroundColor(.primary)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                    
-                    Spacer()
-                    
-                    if locationController.showLogs {
-                        Button("Copy logs") {
-                            let log = locationController.logs
-                                .map { "\($0.stamp): \($0.message)" }
-                                .joined(separator: "\n\n")
-
-                            let pasteboard = NSPasteboard.general
-                            pasteboard.declareTypes([.string], owner: nil)
-
-                            pasteboard.setString(log, forType: .string)
-                        }
-                        .font(.system(size: 11))
-                        
-                        Button("Clear logs") {
-                            locationController.clearLogs()
-                        }
-                        .foregroundColor(.red)
-                        .font(.system(size: 11))
-                    }
-                }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(Color.gray.opacity(0.1))
-                
-                // Секция логов (показывается/скрывается)
-                if locationController.showLogs {
-                    ScrollView {
-                        // Lazy, because a plain VStack in a ScrollView has to build and
-                        // measure every row to know how tall it is. Four rows are visible
-                        // and thousands existed, so every redraw laid out the lot.
-                        LazyVStack(alignment: .leading, spacing: 1) {
-                            ForEach(locationController.logs) { log in
-                                HStack(spacing: 8) {
-                                    Text(log.stamp)
-                                        .padding(.vertical, 4)
-                                        .padding(.horizontal, 8)
-                                    Text(log.message)
-                                        .lineLimit(nil)
-                                        .multilineTextAlignment(.leading)
-                                        .padding(.vertical, 4)
-                                        .padding(.horizontal, 8)
-
-                                    Spacer()
-                                }
-                                .frame(maxWidth: .infinity)
-                                .background(Color.gray.opacity(0.3))
-                            }
-                        }
-                        .frame(maxWidth: .infinity)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: locationController.showLogs ? 100 : 0)
-                    .clipped()
-                }
-            }
+            // Observes the log store alone, so a log line redraws these rows and
+            // leaves the map, the panel and the banner untouched.
+            LogPane(store: locationController.logStore)
         }
         .frame(minWidth: 900, minHeight: 480)
     }

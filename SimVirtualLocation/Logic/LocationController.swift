@@ -192,17 +192,14 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
         didSet { runner.timeDelay = timeScale }
     }
 
-    @Published var logs: [LogEntry] = []
-    @Published var showLogs: Bool = false
-
-    let dateFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.calendar = Calendar(identifier: .iso8601)
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = TimeZone(secondsFromGMT: 0)
-        formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
-        return formatter
-    }()
+    /// The Logs pane's state.
+    ///
+    /// A plain `let`, not `@Published`, and that is the point: a log line is written on
+    /// almost every code path in this class, and while these lived here as published
+    /// properties each one invalidated every view observing the controller — the map,
+    /// the panel, the banner — to add a row to a list. The pane observes this object
+    /// instead, so logging redraws the log and nothing else.
+    let logStore = LogStore()
 
     // MARK: - Internal (previews & tests)
 
@@ -236,8 +233,6 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
     /// The last CoreLocation failure text, so an error it retries forever is logged once.
     private var lastLocationManagerError: String?
 
-    /// How many times the newest log line has repeated, so a failure on a timer collapses.
-    private var repeatedLogCount = 0
 
     @Published var savedLocations: [Location] = []
 
@@ -1935,67 +1930,9 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
 
     /// Records a line for the Logs pane.
     ///
-    /// Called from process termination handlers, discovery, and the device monitor —
-    /// none of which are on the main thread — and `logs` is `@Published`, so writing it
-    /// where it is called from was one of the ways to wedge SwiftUI's publishing lock.
-    /// The timestamp is taken here rather than on arrival so a hop does not skew it.
+    /// Safe from any thread; see `LogStore.record`.
     private func log(_ message: String) {
-        let now = Date()
-        let entry = LogEntry(date: now, message: message, stamp: Self.logTimeFormatter.string(from: now))
-        Self.onMain { [weak self] in
-            guard let self else { return }
-
-            // A failure that repeats on a timer — a missing simctl probed every three
-            // seconds, say — would otherwise push every other line out of the capped log
-            // within hours, which is the opposite of what a failure log is for. The line
-            // stays, and keeps its count, rather than being dropped.
-            if let first = self.logs.first, first.message == entry.message {
-                self.repeatedLogCount += 1
-                self.logs[0] = LogEntry(
-                    date: now,
-                    message: "\(entry.message)  (\(self.repeatedLogCount + 1)x, latest \(entry.stamp))",
-                    stamp: first.stamp
-                )
-                return
-            }
-            self.repeatedLogCount = 0
-
-            self.logs.insert(entry, at: 0)
-            // Bounded, because nothing else ever shrinks this and the pane redraws it.
-            // Deliberately generous: at the noisiest polling rate a small cap would be a
-            // few minutes of history, and a disconnect from twenty minutes ago is exactly
-            // what someone opens this pane to find.
-            if self.logs.count > Self.maxLogEntries {
-                self.logs.removeLast(self.logs.count - Self.maxLogEntries)
-            }
-        }
-    }
-
-    /// How many log lines are kept. Newest are at index 0, so the oldest fall off the end.
-    private static let maxLogEntries = 5_000
-
-    private static let logTimeFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
-        return formatter
-    }()
-
-    /// Runs `work` on the main thread, straight away when already there.
-    ///
-    /// Every `@Published` write has to land on the main thread. SwiftUI takes a lock to
-    /// publish, and a write from a background thread can hold that lock while waiting for
-    /// main at the same moment main is waiting for the lock — which freezes the window
-    /// with no crash and nothing in the log to say so.
-    private static func onMain(_ work: @escaping () -> Void) {
-        if Thread.isMainThread {
-            work()
-        } else {
-            DispatchQueue.main.async(execute: work)
-        }
-    }
-    
-    func clearLogs() {
-        logs.removeAll()
+        logStore.record(message)
     }
 
     private static func presentPymobileDeviceOutput(stdout: Data, stderr: Data, showAlert: @escaping (String) -> Void) {

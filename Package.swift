@@ -22,6 +22,8 @@ let package = Package(
             path: "SimVirtualLocation",
             sources: [
                 "Models/Coordinate.swift",
+                "Models/LogEntry.swift",
+                "Models/LogBuffer.swift",
                 "Models/DayPlan.swift",
                 "Logic/DayPlanRunner.swift",
                 "Utilities/CoordinateParsing.swift",

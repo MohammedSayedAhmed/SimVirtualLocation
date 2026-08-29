@@ -15,7 +15,9 @@
 		AA000055280DE000001D3559 /* Coordinate.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000065280DE000001D3559 /* Coordinate.swift */; };
 		AA000053280DE000001D3559 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000063280DE000001D3559 /* AppDelegate.swift */; };
 		AA000052280DE000001D3559 /* LocationHoldBanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000062280DE000001D3559 /* LocationHoldBanner.swift */; };
+		D14CA3CC0A9941FF8512FC29 /* LogPane.swift in Sources */ = {isa = PBXBuildFile; fileRef = 56405743304C45FCA8AB61D8 /* LogPane.swift */; };
 		AA000051280DE000001D3559 /* LocationHoldSupervisor.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000061280DE000001D3559 /* LocationHoldSupervisor.swift */; };
+		CF57A637F6B3496582D789B6 /* LogStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14BF8536A57048BE8B544E63 /* LogStore.swift */; };
 		AA000001280DE000001D3559 /* DeviceLocationRunning.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000011280DE000001D3559 /* DeviceLocationRunning.swift */; };
 		AA000002280DE000001D3559 /* IOSProcessLaunching.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000012280DE000001D3559 /* IOSProcessLaunching.swift */; };
 		AA000003280DE000001D3559 /* MapSceneCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000013280DE000001D3559 /* MapSceneCoordinator.swift */; };
@@ -50,6 +52,7 @@
 		ED8824F627C38044007499B7 /* LocationController.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED8824F527C38044007499B7 /* LocationController.swift */; };
 		EDB5434928154ACE002182FF /* Track.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDB5434828154ACE002182FF /* Track.swift */; };
 		EDDB312E2BFCE6FE0079D10D /* LogEntry.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDDB312D2BFCE6FE0079D10D /* LogEntry.swift */; };
+		22770134ECCD412EBA4B74D1 /* LogBuffer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C2AA062352E4314BB6F91CF /* LogBuffer.swift */; };
 		EDEF747D283621EB00319E02 /* Runner.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDEF747C283621EB00319E02 /* Runner.swift */; };
 		EDF88CA6280EDAE300D8C794 /* helper-app.apk in Resources */ = {isa = PBXBuildFile; fileRef = EDF88CA5280EDADD00D8C794 /* helper-app.apk */; };
 		EDF95A932AFE39D7007A2D73 /* README.md in Resources */ = {isa = PBXBuildFile; fileRef = EDF95A922AFE39D7007A2D73 /* README.md */; };
@@ -66,7 +69,9 @@
 		AA000065280DE000001D3559 /* Coordinate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Coordinate.swift; sourceTree = "<group>"; };
 		AA000063280DE000001D3559 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		AA000062280DE000001D3559 /* LocationHoldBanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocationHoldBanner.swift; sourceTree = "<group>"; };
+		56405743304C45FCA8AB61D8 /* LogPane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogPane.swift; sourceTree = "<group>"; };
 		AA000061280DE000001D3559 /* LocationHoldSupervisor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocationHoldSupervisor.swift; sourceTree = "<group>"; };
+		14BF8536A57048BE8B544E63 /* LogStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogStore.swift; sourceTree = "<group>"; };
 		AA000011280DE000001D3559 /* DeviceLocationRunning.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceLocationRunning.swift; sourceTree = "<group>"; };
 		AA000012280DE000001D3559 /* IOSProcessLaunching.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IOSProcessLaunching.swift; sourceTree = "<group>"; };
 		AA000013280DE000001D3559 /* MapSceneCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MapSceneCoordinator.swift; sourceTree = "<group>"; };
@@ -103,6 +108,7 @@
 		EDB5434828154ACE002182FF /* Track.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Track.swift; sourceTree = "<group>"; };
 		EDC18D1827C3AC9E00584479 /* SimVirtualLocation.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = SimVirtualLocation.entitlements; sourceTree = "<group>"; };
 		EDDB312D2BFCE6FE0079D10D /* LogEntry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogEntry.swift; sourceTree = "<group>"; };
+		4C2AA062352E4314BB6F91CF /* LogBuffer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogBuffer.swift; sourceTree = "<group>"; };
 		EDEF747C283621EB00319E02 /* Runner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Runner.swift; sourceTree = "<group>"; };
 		EDF88CA5280EDADD00D8C794 /* helper-app.apk */ = {isa = PBXFileReference; lastKnownFileType = file; path = "helper-app.apk"; sourceTree = "<group>"; };
 		EDF95A922AFE39D7007A2D73 /* README.md */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = SOURCE_ROOT; };
@@ -157,6 +163,7 @@
 				EDFC771E2B0A54860058B13A /* LocationsView.swift */,
 				AA00001C280DE000001D3559 /* SimVirtualLocationAlertModifier.swift */,
 				AA000062280DE000001D3559 /* LocationHoldBanner.swift */,
+				56405743304C45FCA8AB61D8 /* LogPane.swift */,
 				AA000063280DE000001D3559 /* AppDelegate.swift */,
 				AA00006A280DE000001D3559 /* DayPlanPanel.swift */,
 				AA0000F8280DE000001D3559 /* DeviceActivityView.swift */,
@@ -193,6 +200,7 @@
 				AA000013280DE000001D3559 /* MapSceneCoordinator.swift */,
 				AA000069280DE000001D3559 /* DayPlanRunner.swift */,
 				AA000061280DE000001D3559 /* LocationHoldSupervisor.swift */,
+				14BF8536A57048BE8B544E63 /* LogStore.swift */,
 			);
 			path = Logic;
 			sourceTree = "<group>";
@@ -205,6 +213,7 @@
 				EDB5434828154ACE002182FF /* Track.swift */,
 				EDFC77202B0A55050058B13A /* Locations.swift */,
 				EDDB312D2BFCE6FE0079D10D /* LogEntry.swift */,
+				4C2AA062352E4314BB6F91CF /* LogBuffer.swift */,
 				AA000014280DE000001D3559 /* AppPlatform.swift */,
 				AA0000F6280DE000001D3559 /* DeviceActivity.swift */,
 				AA0000F4280DE000001D3559 /* IOSConnection.swift */,
@@ -329,7 +338,9 @@
 				AA000055280DE000001D3559 /* Coordinate.swift in Sources */,
 				AA000053280DE000001D3559 /* AppDelegate.swift in Sources */,
 				AA000052280DE000001D3559 /* LocationHoldBanner.swift in Sources */,
+				D14CA3CC0A9941FF8512FC29 /* LogPane.swift in Sources */,
 				AA000051280DE000001D3559 /* LocationHoldSupervisor.swift in Sources */,
+				CF57A637F6B3496582D789B6 /* LogStore.swift in Sources */,
 				ED8824F627C38044007499B7 /* LocationController.swift in Sources */,
 				ED82D39227C1FC8C0093656B /* MapView.swift in Sources */,
 				ED82D38E27C1FC2C0093656B /* Main.swift in Sources */,
@@ -347,6 +358,7 @@
 				ED76C13827C1606E00E74500 /* Simulator.swift in Sources */,
 				EDEF747D283621EB00319E02 /* Runner.swift in Sources */,
 				EDDB312E2BFCE6FE0079D10D /* LogEntry.swift in Sources */,
+				22770134ECCD412EBA4B74D1 /* LogBuffer.swift in Sources */,
 				AA000001280DE000001D3559 /* DeviceLocationRunning.swift in Sources */,
 				AA000002280DE000001D3559 /* IOSProcessLaunching.swift in Sources */,
 				AA000003280DE000001D3559 /* MapSceneCoordinator.swift in Sources */,
