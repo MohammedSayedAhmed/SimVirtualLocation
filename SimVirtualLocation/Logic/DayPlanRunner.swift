@@ -43,6 +43,14 @@ final class DayPlanRunner {
     /// fixed speed — the plan's arrival times stay exact either way.
     var playLeg: (([Coordinate], Double, TimeInterval) -> Void)?
 
+    /// Where "now" comes from.
+    ///
+    /// Every decision this makes is a comparison against the wall clock, which made the
+    /// behaviour that matters most — parking early, telling a leg that has not started
+    /// from one that has died — impossible to check without a phone and a stopwatch.
+    /// Production leaves this alone; tests move time on purpose.
+    var now: () -> Date = Date.init
+
     /// Whether the session driving the current leg is still up.
     ///
     /// A leg is one long-lived playback session, and a held point has a supervisor
@@ -114,9 +122,11 @@ final class DayPlanRunner {
 
     // MARK: - Private
 
-    private func tick() {
+    /// Re-decides what should be happening. Internal rather than private so the tests
+    /// can drive it directly instead of waiting on a two-second timer.
+    func tick() {
         guard let schedule else { return }
-        guard let position = schedule.position(at: Date()) else { return }
+        guard let position = schedule.position(at: now()) else { return }
 
         switch position {
         case .atStop(let index, let until):
@@ -146,11 +156,11 @@ final class DayPlanRunner {
             // Close enough to arriving that restarting the last of the movement would be
             // more noticeable than simply being there: park at the destination and let
             // the clock catch up.
-            let untilArrival = leg.arrival.timeIntervalSince(Date())
+            let untilArrival = leg.arrival.timeIntervalSince(now())
             let remaining = Self.remainder(of: leg.path, from: fraction)
             guard remaining.count > 1, untilArrival > Self.arrivalFloor else {
                 activity = .travelling(legIndex: legIndex, arrival: leg.arrival)
-                legIssuedAt = Date()
+                legIssuedAt = now()
                 holdPoint?(destination.coordinate)
                 return
             }
@@ -159,7 +169,7 @@ final class DayPlanRunner {
             log?("Day plan: \(from) → \(destination.name), arriving \(Self.time(leg.arrival))")
 
             activity = .travelling(legIndex: legIndex, arrival: leg.arrival)
-            legIssuedAt = Date()
+            legIssuedAt = now()
             playLeg?(remaining, leg.speedKph, untilArrival)
         }
     }
@@ -170,7 +180,7 @@ final class DayPlanRunner {
     /// come up, and during that moment "not running" means "not yet", not "no longer".
     private func hasLostLegSession() -> Bool {
         guard let isLegSessionAlive else { return false }
-        guard let legIssuedAt, Date().timeIntervalSince(legIssuedAt) >= Self.legStartGrace else { return false }
+        guard let legIssuedAt, now().timeIntervalSince(legIssuedAt) >= Self.legStartGrace else { return false }
         return !isLegSessionAlive()
     }
 

@@ -46,6 +46,11 @@ final class LocationHoldSupervisor {
     /// Why the target cannot be reached, in words that name the actual target.
     var unavailableReason: (() -> String)?
 
+    /// Where "now" comes from. See `DayPlanRunner.now` — same reason, higher stakes:
+    /// the overdue-apply rule here is what stops a hold sitting in `.applying` forever
+    /// while the device quietly runs on its own GPS.
+    var now: () -> Date = Date.init
+
     var onStateChange: ((State) -> Void)?
     var log: ((String) -> Void)?
 
@@ -105,7 +110,12 @@ final class LocationHoldSupervisor {
     private var activity: NSObjectProtocol?
     private var wakeObserver: NSObjectProtocol?
 
-    init() {
+    /// - Parameter observesSystemWake: false in tests. Registering for the workspace
+    ///   notification is the only thing here that reaches for a desktop session, and a
+    ///   unit test has no business needing one.
+    init(observesSystemWake: Bool = true) {
+        guard observesSystemWake else { return }
+
         // Sleeping the Mac tears down the tunnel and the DVT channel behind it.
         wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didWakeNotification,
@@ -131,7 +141,7 @@ final class LocationHoldSupervisor {
         let point = Coordinate(coordinate)
         held = point
         state = .applying(point)
-        applyStartedAt = Date()
+        applyStartedAt = now()
 
         beginActivity()
         restartTimer()
@@ -156,7 +166,7 @@ final class LocationHoldSupervisor {
     func confirmApplied() {
         guard let held else { return }
         applyStartedAt = nil
-        state = .held(held, confirmedAt: Date())
+        state = .held(held, confirmedAt: now())
     }
 
     /// A session ended. The point lapses shortly after, so put it back.
@@ -210,7 +220,7 @@ final class LocationHoldSupervisor {
         // the point back, and the replacement needs a second or two to take it again.
         // A live session already *is* the hold, so leave it running.
         if trigger == .keepAlive, isSessionAlive?() == true {
-            state = .held(held, confirmedAt: Date())
+            state = .held(held, confirmedAt: now())
             return
         }
 
@@ -227,7 +237,7 @@ final class LocationHoldSupervisor {
 
         log?("Applying \(held.formatted) (\(trigger.rawValue))")
         state = .applying(held)
-        applyStartedAt = Date()
+        applyStartedAt = now()
         apply?(held.clCoordinate)
     }
 
@@ -239,7 +249,7 @@ final class LocationHoldSupervisor {
     /// Whether the in-flight apply has been waiting long enough to be written off.
     private var applyIsOverdue: Bool {
         guard let applyStartedAt else { return true }
-        return Date().timeIntervalSince(applyStartedAt) > Self.applyTimeout
+        return now().timeIntervalSince(applyStartedAt) > Self.applyTimeout
     }
 
     // MARK: - Private
