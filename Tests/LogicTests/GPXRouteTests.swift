@@ -72,6 +72,49 @@ final class GPXRouteTests: XCTestCase {
         }
     }
 
+    func testWritingReplacesAndDeletesThePreviousFile() throws {
+        // Nothing ever deleted these; a day of holds and legs left hundreds behind.
+        let point = CLLocationCoordinate2D(latitude: 25.5, longitude: 51.5)
+        let first = try GPXRoute.writeStationary(coordinate: point, interval: 10, duration: 60)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: first.path))
+
+        let second = try GPXRoute.writeStationary(coordinate: point, interval: 10, duration: 60)
+        defer { try? FileManager.default.removeItem(at: second) }
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: first.path),
+                       "the replaced file must be deleted, not left to accumulate")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: second.path))
+    }
+
+    func testLeftoverSweepTakesOldRunsFilesAndNothingElse() throws {
+        let manager = FileManager.default
+        let directory = manager.temporaryDirectory
+
+        // A file a previous run (or a crash) left behind, and two bystanders.
+        let leftover = directory.appendingPathComponent("simvirtuallocation-oldrun-leftover.gpx")
+        let wrongSuffix = directory.appendingPathComponent("simvirtuallocation-not-a-route.txt")
+        let wrongPrefix = directory.appendingPathComponent("someoneelses-route.gpx")
+        for url in [leftover, wrongSuffix, wrongPrefix] {
+            try "x".write(to: url, atomically: true, encoding: .utf8)
+        }
+        defer {
+            for url in [leftover, wrongSuffix, wrongPrefix] { try? manager.removeItem(at: url) }
+        }
+
+        // A file THIS run just wrote, which the sweep must not touch.
+        let live = try GPXRoute.writeStationary(
+            coordinate: CLLocationCoordinate2D(latitude: 25.5, longitude: 51.5),
+            interval: 10, duration: 60)
+        defer { try? manager.removeItem(at: live) }
+
+        GPXRoute.removeLeftovers()
+
+        XCTAssertFalse(manager.fileExists(atPath: leftover.path), "an old run's file goes")
+        XCTAssertTrue(manager.fileExists(atPath: wrongSuffix.path), "non-GPX files are not ours to delete")
+        XCTAssertTrue(manager.fileExists(atPath: wrongPrefix.path), "other apps' files are not ours to delete")
+        XCTAssertTrue(manager.fileExists(atPath: live.path), "this run's own live file survives")
+    }
+
     func testEmptyRoutesAreRefusedNotWritten() {
         XCTAssertThrowsError(try GPXRoute.write(coordinates: [], speed: 1))
         XCTAssertThrowsError(try GPXRoute.write(samples: []))

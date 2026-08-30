@@ -309,6 +309,10 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
 
         configureLocationHold()
 
+        // Files a crash or force-quit left behind; this run's own files are cleaned as
+        // they are replaced.
+        GPXRoute.removeLeftovers()
+
         // Stored settings are read here, synchronously, because everything below depends
         // on knowing what the target is. They used to be restored inside the Task below,
         // behind an `await refreshDevices()`, while the held point was restored on the

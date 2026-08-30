@@ -117,7 +117,7 @@ enum GPXRoute {
         """
 
         let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("simvirtuallocation-\(UUID().uuidString).gpx")
+            .appendingPathComponent("simvirtuallocation-\(filePrefix)\(UUID().uuidString).gpx")
 
         do {
             try gpx.write(to: url, atomically: true, encoding: .utf8)
@@ -125,7 +125,41 @@ enum GPXRoute {
             throw Failure.writeFailed(underlying: error)
         }
 
+        // One playback session exists at a time, so one file is live at a time: the
+        // previous one's process is already stopped (or being stopped) by whoever asked
+        // for this write, and `play` reads the whole file when it starts anyway. Nothing
+        // deleted these before, and a day of holds and legs left hundreds behind.
+        if let retired = lastWritten, retired != url {
+            try? FileManager.default.removeItem(at: retired)
+        }
+        lastWritten = url
+
         return url
+    }
+
+    /// The most recent file handed out, deleted when the next one replaces it.
+    /// Main-thread only, like every caller.
+    private static var lastWritten: URL?
+
+    /// Distinguishes this app instance's files from a previous run's, so the launch
+    /// sweep can tell leftovers from files it just wrote itself.
+    private static let filePrefix = String(UUID().uuidString.prefix(8)) + "-"
+
+    /// Deletes GPX files left in the temporary directory by earlier runs.
+    ///
+    /// A crash or force-quit skips the replace-time delete above, and the last file of
+    /// any session is never replaced at all. Called once at launch; a file belonging to
+    /// a still-running helper is safe to unlink, since `play` parses the whole file
+    /// before its first waypoint.
+    static func removeLeftovers() {
+        let manager = FileManager.default
+        let directory = manager.temporaryDirectory
+        guard let names = try? manager.contentsOfDirectory(atPath: directory.path) else { return }
+
+        for name in names
+        where name.hasPrefix("simvirtuallocation-") && name.hasSuffix(".gpx") && !name.contains(filePrefix) {
+            try? manager.removeItem(at: directory.appendingPathComponent(name))
+        }
     }
 
 }
