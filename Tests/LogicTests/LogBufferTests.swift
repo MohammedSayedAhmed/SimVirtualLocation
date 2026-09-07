@@ -6,7 +6,7 @@ import XCTest
 final class LogBufferTests: XCTestCase {
 
     private func entry(_ message: String, stamp: String = "T0") -> LogEntry {
-        LogEntry(date: Date(timeIntervalSince1970: 0), message: message, stamp: stamp)
+        LogEntry(message: message, stamp: stamp)
     }
 
     func testNewestLineComesFirst() {

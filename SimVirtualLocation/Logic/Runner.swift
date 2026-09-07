@@ -12,7 +12,6 @@ class Runner {
 
     // MARK: - Internal Properties
 
-    var timeDelay: TimeInterval = 0.5
     var log: ((String) -> Void)?
     var pymobiledevicePath: String?
 
@@ -48,9 +47,7 @@ class Runner {
 
     private let runnerQueue = DispatchQueue(label: "runnerQueue", qos: .background)
     private let executionQueue = DispatchQueue(label: "executionQueue", qos: .background, attributes: .concurrent)
-    private var idevicelocationPath: URL?
 
-    private var currentTask: Process?
     private var tasks: [Process] = []
     /// How many `simulate-location` child processes may be alive at once. Each holds a
     /// DVT channel open; the newest one owns the currently simulated location, and that
@@ -61,8 +58,6 @@ class Runner {
     /// expected noise (SIGTERM traceback) and must not surface as a user-facing alert,
     /// because `showAlert` sets `isSimulating = false` and would abort the whole route.
     private var reapedPIDs: Set<Int32> = []
-
-    private var isStopped: Bool = false
 
     /// Long-lived `simulate-location play` process for route playback, if one is running.
     private var routePlaybackTask: Process?
@@ -81,11 +76,6 @@ class Runner {
     private var claimedGeneration: UInt64 = 0
 
     // MARK: - Internal Methods
-
-    /// `true` while a `simulate-location set` process is still holding a point open.
-    var isLocationSessionAlive: Bool {
-        runnerQueue.sync { tasks.contains { $0.isRunning } }
-    }
 
     func stop() {
         stopRoutePlayback()
@@ -110,8 +100,6 @@ class Runner {
 
         // Off the queue, for the same reason as stopRoutePlayback.
         live.forEach { $0.terminate() }
-
-        isStopped = true
     }
     
     func runOnSimulator(
@@ -133,12 +121,6 @@ class Runner {
         location: CLLocationCoordinate2D,
         showAlert: @escaping (String) -> Void
     ) async throws {
-        self.isStopped = false
-
-        guard !self.isStopped else {
-            return
-        }
-
         let task = try await self.taskForIOS(
             args: [
                 "developer",
@@ -153,8 +135,6 @@ class Runner {
 
         self.log?("set iOS location \(location.description)")
         self.log?("task: \(task.logDescription)")
-
-        self.currentTask = task
 
         let inputPipe = Pipe()
         let outputPipe = Pipe()
@@ -215,7 +195,7 @@ class Runner {
             try task.run()
 
             // Retire older processes rather than calling stop(), which tears down every
-            // task and flips isStopped, silently aborting the run in progress.
+            // task, silently aborting the run in progress.
             self.runnerQueue.async {
                 while self.tasks.count >= self.maxLiveTasks {
                     let old = self.tasks.removeFirst()
@@ -246,12 +226,6 @@ class Runner {
             return
         }
 
-        self.isStopped = false
-
-        guard !self.isStopped else {
-            return
-        }
-
         let task = try await self.taskForIOS(
             args: ["developer", "dvt", "simulate-location", "set"]
                 + connectionArguments
@@ -261,8 +235,6 @@ class Runner {
 
         self.log?("set iOS location \(location.description)")
         self.log?("task: \(task.logDescription)")
-
-        self.currentTask = task
 
         let inputPipe = Pipe()
         let outputPipe = Pipe()
@@ -323,7 +295,7 @@ class Runner {
             try task.run()
 
             // Retire older processes rather than calling stop(), which tears down every
-            // task and flips isStopped, silently aborting the run in progress.
+            // task, silently aborting the run in progress.
             self.runnerQueue.async {
                 while self.tasks.count >= self.maxLiveTasks {
                     let old = self.tasks.removeFirst()
@@ -364,7 +336,6 @@ class Runner {
         }
 
         stopRoutePlayback()
-        self.isStopped = false
         self.playbackLogBuffer = ""
 
         let generation = runnerQueue.sync { () -> UInt64 in

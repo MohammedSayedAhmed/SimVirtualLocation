@@ -3,7 +3,6 @@ import Foundation
 
 /// Abstraction over simulator / USB iOS / RSD iOS / Android injection for tests and composition.
 protocol DeviceLocationRunning: IOSProcessLaunching {
-    var timeDelay: TimeInterval { get set }
     var log: ((String) -> Void)? { get set }
     var onActivity: ((DeviceActivity) -> Void)? { get set }
     var onLocationPlayed: ((Double, Double) -> Void)? { get set }
@@ -12,9 +11,6 @@ protocol DeviceLocationRunning: IOSProcessLaunching {
     /// Route playback exited on its own (true = cleanly); never fired for intentional stops.
     var onPlaybackFinished: ((Bool) -> Void)? { get set }
     var pymobiledevicePath: String? { get set }
-
-    /// `true` while a `simulate-location set` process is still holding a point open.
-    var isLocationSessionAlive: Bool { get }
 
     func stop()
 

@@ -195,9 +195,7 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
     @Published var rsdAddress: String = ""
     @Published var rsdPort: String = ""
 
-    @Published var timeScale: Double = 1.5 {
-        didSet { runner.timeDelay = timeScale }
-    }
+    @Published var timeScale: Double = 1.5
 
     /// The Logs pane's state.
     ///
@@ -232,7 +230,6 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
     private var tracks: [Track] = []
     private var currentTrackIndex: Int = 0
     private var lastTrackLocation: CLLocationCoordinate2D?
-    private var tracksTimes: [Track: Double] = [:]
 
     private var timer: Timer?
     private var wasHoldLost = false
@@ -607,7 +604,6 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
         routeExpectedTravelTime = 0
         targetDurationMinutes = ""
         tracks = []
-        tracksTimes = [:]
         playback = nil
         playbackPausedAt = nil
         playbackSeed = 1
@@ -694,7 +690,6 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
         stopSimulation()
 
         tracks = []
-        tracksTimes = [:]
 
         let buffer = UnsafeBufferPointer(start: route.polyline.points(), count: route.polyline.pointCount)
 
@@ -733,7 +728,6 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
         }
 
         stopSimulation()
-        tracksTimes = [:]
         tracks = [
             Track(
                 startPoint: MKMapPoint(endpoints[0].coordinate),
@@ -1214,7 +1208,6 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
             timer?.invalidate()
             timer = nil
             currentTrackIndex = 0
-            printTimesToLog()
             return
         }
 
@@ -1229,19 +1222,17 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
         switch trackMove {
         case .moveTo(to: let to, from: let from, withSpeed: let moveSpeed):
             lastTrackLocation = to
-            if !isPlayingRoute { run(location: to) }
+            run(location: to)
             mapScene.placeSimulationAnnotation(at: to)
             log("move to — distance=\(CLLocation.distance(from: from, to: to)), speed=\(moveSpeed)")
 
         case .finishTo(to: let to, from: let from, withSpeed: let moveSpeed):
             lastTrackLocation = nil
             currentTrackIndex += 1
-            if !isPlayingRoute { run(location: to) }
+            run(location: to)
             mapScene.placeSimulationAnnotation(at: to)
             log("finish to — distance=\(CLLocation.distance(from: from, to: to)), speed=\(moveSpeed)")
         }
-
-        tracksTimes[track] = (tracksTimes[track] ?? 0) + timeScale
     }
 
     private func executeAdbCommand(args: [String], successMessage: String? = nil) {
@@ -1278,14 +1269,6 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
             showAlert(errorText)
         } else if let successMessage = successMessage {
             showAlert(successMessage)
-        }
-    }
-
-    private func printTimesToLog() {
-        tracksTimes.forEach { track, time in
-            let distance = CLLocation.distance(from: track.startPoint.coordinate, to: track.endPoint.coordinate)
-            let avgSpeed = distance / time
-            log("Track result: speed=\(avgSpeed * 3.6) km/h, distance=\(distance), time=\(time)")
         }
     }
 

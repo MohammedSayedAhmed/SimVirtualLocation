@@ -32,7 +32,7 @@ final class LogStore: ObservableObject {
     /// taken at the call rather than on arrival so the hop does not skew it.
     func record(_ message: String) {
         let now = Date()
-        let entry = LogEntry(date: now, message: message, stamp: Self.formatter.string(from: now))
+        let entry = LogEntry(message: message, stamp: Self.formatter.string(from: now))
         Self.onMain { [weak self] in
             guard let self else { return }
             self.buffer.record(entry)

@@ -14,7 +14,6 @@ struct LogEntry: Identifiable {
     /// misplaced rows rather than staying invisible.
     let id = UUID()
 
-    let date: Date
     let message: String
 
     /// The timestamp already rendered. Formatting was happening per row per redraw, so

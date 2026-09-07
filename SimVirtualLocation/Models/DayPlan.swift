@@ -23,8 +23,6 @@ struct DayPlanStop: Identifiable, Codable, Equatable {
         CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
     }
 
-    static func minutes(hour: Int, minute: Int) -> Int { hour * 60 + minute }
-
     static func formatted(minutes: Int) -> String {
         String(format: "%02d:%02d", minutes / 60, minutes % 60)
     }
@@ -32,8 +30,6 @@ struct DayPlanStop: Identifiable, Codable, Equatable {
 
 struct DayPlan: Codable, Equatable {
     var stops: [DayPlanStop] = []
-
-    var isRunnable: Bool { stops.count >= 1 }
 }
 
 /// A leg after the schedule has been worked out against real clock times.
@@ -154,19 +150,6 @@ struct DaySchedule: Equatable {
         }
 
         return .atStop(index: stops.count - 1, until: nil)
-    }
-
-    /// The coordinate for a position, interpolated along the leg while travelling.
-    func coordinate(for position: Position) -> CLLocationCoordinate2D? {
-        switch position {
-        case .atStop(let index, _):
-            guard stops.indices.contains(index) else { return nil }
-            return stops[index].coordinate
-
-        case .travelling(let legIndex, let fraction):
-            guard legs.indices.contains(legIndex) else { return nil }
-            return Self.interpolate(legs[legIndex].path, fraction: fraction)
-        }
     }
 
     /// Point `fraction` of the way along `path`, by distance rather than by index, so an

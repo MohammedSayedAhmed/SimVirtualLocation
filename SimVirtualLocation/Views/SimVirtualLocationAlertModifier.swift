@@ -6,17 +6,9 @@ struct SimVirtualLocationAlertModifier: ViewModifier {
     let text: String
 
     func body(content: Content) -> some View {
-        if #available(macOS 12.0, *) {
-            content
-                .alert(text, isPresented: isPresented) {
-                    Text("OK")
-                }
-        } else {
-            content.alert(isPresented: isPresented) {
-                SwiftUI.Alert(
-                    title: Text(text)
-                )
+        content
+            .alert(text, isPresented: isPresented) {
+                Text("OK")
             }
-        }
     }
 }

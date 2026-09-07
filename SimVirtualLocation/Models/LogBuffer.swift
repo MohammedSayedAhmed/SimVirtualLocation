@@ -43,7 +43,6 @@ struct LogBuffer {
         if entry.message == newestMessage, let newest = entries.first {
             repeats += 1
             entries[0] = LogEntry(
-                date: entry.date,
                 message: "\(entry.message)  (\(repeats + 1)x, latest \(entry.stamp))",
                 stamp: newest.stamp
             )
