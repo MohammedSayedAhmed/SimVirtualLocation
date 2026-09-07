@@ -33,12 +33,3 @@ struct LocationsFileDocument: FileDocument {
         return FileWrapper(regularFileWithContents: data)
     }
 }
-
-struct Location: Codable, Identifiable {
-
-    var id: String { "\(latitude)_\(longitude)" }
-
-    let name: String
-    let latitude: Double
-    let longitude: Double
-}

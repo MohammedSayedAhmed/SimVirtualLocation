@@ -13,6 +13,7 @@
 		AA000057280DE000001D3559 /* DayPlanStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000067280DE000001D3559 /* DayPlanStore.swift */; };
 		AA000056280DE000001D3559 /* DayPlan.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000066280DE000001D3559 /* DayPlan.swift */; };
 		AA000055280DE000001D3559 /* Coordinate.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000065280DE000001D3559 /* Coordinate.swift */; };
+		B41C7E5B0D2F49A18E6C3B72 /* Location.swift in Sources */ = {isa = PBXBuildFile; fileRef = B41C7E5A0D2F49A18E6C3B71 /* Location.swift */; };
 		AA000053280DE000001D3559 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000063280DE000001D3559 /* AppDelegate.swift */; };
 		AA000052280DE000001D3559 /* LocationHoldBanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000062280DE000001D3559 /* LocationHoldBanner.swift */; };
 		D14CA3CC0A9941FF8512FC29 /* LogPane.swift in Sources */ = {isa = PBXBuildFile; fileRef = 56405743304C45FCA8AB61D8 /* LogPane.swift */; };
@@ -66,6 +67,7 @@
 		AA000067280DE000001D3559 /* DayPlanStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DayPlanStore.swift; sourceTree = "<group>"; };
 		AA000066280DE000001D3559 /* DayPlan.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DayPlan.swift; sourceTree = "<group>"; };
 		AA000065280DE000001D3559 /* Coordinate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Coordinate.swift; sourceTree = "<group>"; };
+		B41C7E5A0D2F49A18E6C3B71 /* Location.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Location.swift; sourceTree = "<group>"; };
 		AA000063280DE000001D3559 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		AA000062280DE000001D3559 /* LocationHoldBanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocationHoldBanner.swift; sourceTree = "<group>"; };
 		56405743304C45FCA8AB61D8 /* LogPane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogPane.swift; sourceTree = "<group>"; };
@@ -212,6 +214,7 @@
 				ED66969927C3E388007CC068 /* Device.swift */,
 				EDB5434828154ACE002182FF /* Track.swift */,
 				EDFC77202B0A55050058B13A /* Locations.swift */,
+				B41C7E5A0D2F49A18E6C3B71 /* Location.swift */,
 				EDDB312D2BFCE6FE0079D10D /* LogEntry.swift */,
 				4C2AA062352E4314BB6F91CF /* LogBuffer.swift */,
 				AA000014280DE000001D3559 /* AppPlatform.swift */,
@@ -333,6 +336,7 @@
 				AA000057280DE000001D3559 /* DayPlanStore.swift in Sources */,
 				AA000056280DE000001D3559 /* DayPlan.swift in Sources */,
 				AA000055280DE000001D3559 /* Coordinate.swift in Sources */,
+				B41C7E5B0D2F49A18E6C3B72 /* Location.swift in Sources */,
 				AA000053280DE000001D3559 /* AppDelegate.swift in Sources */,
 				AA000052280DE000001D3559 /* LocationHoldBanner.swift in Sources */,
 				D14CA3CC0A9941FF8512FC29 /* LogPane.swift in Sources */,

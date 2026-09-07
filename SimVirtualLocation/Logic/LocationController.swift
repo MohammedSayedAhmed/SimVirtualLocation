@@ -374,6 +374,10 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
     // MARK: - Public
 
     func refreshDevices() async {
+        // Asking by hand is also how someone retries after installing pymobiledevice3:
+        // clearing the path makes the runner look for it again rather than keep
+        // answering from a cached failure.
+        runner.pymobiledevicePath = nil
         await refreshDevices(silently: false)
     }
 
@@ -782,9 +786,11 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
             return
         }
 
-        executeAdbCommand(args: ["shell", "settings", "put", "secure", "location_providers_allowed", "+gps"])
+        // `-s` like every other adb call here: without it adb picks a device itself,
+        // so with two attached this configured whichever one it felt like.
+        executeAdbCommand(args: ["-s", adbDeviceId, "shell", "settings", "put", "secure", "location_providers_allowed", "+gps"])
         executeAdbCommand(
-            args: ["shell", "settings", "put", "secure", "location_providers_allowed", "+network"],
+            args: ["-s", adbDeviceId, "shell", "settings", "put", "secure", "location_providers_allowed", "+network"],
             successMessage: "Emulator is ready"
         )
     }
@@ -915,8 +921,21 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
             )
             let connection = iosConnection
 
-            Task {
-                try await runner.playRoute(gpxURL: url, connection: connection, activityLabel: "Route playing", showAlert: showAlert)
+            // `try` inside a bare Task discards the error: a launch that threw left the
+            // app reporting "route playing" with the phone on its real GPS and nothing
+            // said so. reportRouteLaunchFailure surfaces it and ends the run.
+            Task { [weak self] in
+                guard let self else { return }
+                do {
+                    try await self.runner.playRoute(
+                        gpxURL: url,
+                        connection: connection,
+                        activityLabel: "Route playing",
+                        showAlert: self.showAlert
+                    )
+                } catch {
+                    self.reportRouteLaunchFailure(error)
+                }
             }
 
             let km = playback.remainingDistance / 1000
@@ -1044,14 +1063,11 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
             return
         }
 
-        savedLocations.remove(at: locationIndex)
-        savedLocations.insert(
-            Location(
-                name: name,
-                latitude: location.latitude,
-                longitude: location.longitude
-            ),
-            at: locationIndex
+        savedLocations[locationIndex] = Location(
+            id: location.id,
+            name: name,
+            latitude: location.latitude,
+            longitude: location.longitude
         )
 
         persistSavedLocations()
@@ -1183,8 +1199,21 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
             )
             let connection = iosConnection
 
-            Task {
-                try await runner.playRoute(gpxURL: url, connection: connection, activityLabel: "Route playing", showAlert: showAlert)
+            // `try` inside a bare Task discards the error: a launch that threw left the
+            // app reporting "route playing" with the phone on its real GPS and nothing
+            // said so. reportRouteLaunchFailure surfaces it and ends the run.
+            Task { [weak self] in
+                guard let self else { return }
+                do {
+                    try await self.runner.playRoute(
+                        gpxURL: url,
+                        connection: connection,
+                        activityLabel: "Route playing",
+                        showAlert: self.showAlert
+                    )
+                } catch {
+                    self.reportRouteLaunchFailure(error)
+                }
             }
 
             // The count is the route's own points, not the drive's — a realistic drive
@@ -1905,6 +1934,22 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
         formatter.dateFormat = "HH:mm:ss"
         return formatter
     }()
+
+    /// A route could not be launched at all.
+    ///
+    /// `reportInjectionFailure` deliberately leaves a route in flight alone, so on this
+    /// path it would log and change nothing: the app would go on saying "route playing"
+    /// while the phone sat on its real GPS. Nobody is necessarily watching the Mac, so
+    /// this ends the run and says so out loud, the same way a lost hold does.
+    private func reportRouteLaunchFailure(_ error: Error) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.log("Could not start the route: \(error.localizedDescription)")
+            self.activity = .failed(error.localizedDescription)
+            self.endRoutePlayback()
+            self.announceLoss()
+        }
+    }
 
     private func reportInjectionFailure(_ error: Error) {
         DispatchQueue.main.async { [weak self] in

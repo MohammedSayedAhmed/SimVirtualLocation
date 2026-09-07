@@ -13,7 +13,23 @@ class Runner {
     // MARK: - Internal Properties
 
     var log: ((String) -> Void)?
-    var pymobiledevicePath: String?
+
+    /// Where `pymobiledevice3` lives, once found. Setting it to nil asks for a fresh
+    /// search — which is how the UI retries after someone installs the tool.
+    var pymobiledevicePath: String? {
+        didSet {
+            if pymobiledevicePath == nil { hasReportedMissingPymobiledevice = false }
+        }
+    }
+
+    /// Whether the "not found" message has already been put in front of the user.
+    ///
+    /// The search result was cached in `pymobiledevicePath` as `""` on failure, but the
+    /// cache check treated `""` the same as "never looked", so every call searched the
+    /// disk again and raised the modal again. With the device scan running every three
+    /// seconds, a Mac without pymobiledevice3 installed got an alert every three
+    /// seconds, forever.
+    private var hasReportedMissingPymobiledevice = false
 
     /// Reports progress of device operations so the UI can show something during the
     /// seconds a userspace tunnel takes to come up, rather than appearing frozen.
@@ -609,9 +625,12 @@ class Runner {
         do {
             try task.run()
         } catch {
+            // Without this return it carried on to read a pipe nothing would ever write
+            // to and to wait on a process that was never launched — on the main thread.
             Task { @MainActor in
                 showAlert(error.localizedDescription)
             }
+            return
         }
 
         let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
@@ -627,8 +646,7 @@ class Runner {
     }
 
     func taskForIOS(args: [String], showAlert: @escaping (String) -> Void) async throws -> Process {
-        // Check cache
-        if pymobiledevicePath == nil || pymobiledevicePath == "" {
+        if pymobiledevicePath == nil, !hasReportedMissingPymobiledevice {
             pymobiledevicePath = findPymobiledevice3Path()
 
             if pymobiledevicePath == nil {
@@ -670,7 +688,7 @@ class Runner {
                 Task { @MainActor in
                     showAlert(message)
                 }
-                pymobiledevicePath = ""
+                hasReportedMissingPymobiledevice = true
             }
         }
 

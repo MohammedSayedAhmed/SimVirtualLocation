@@ -70,8 +70,16 @@ struct LocationsView: View {
                     contentType: .json,
                     defaultFilename: "SimVirtualLocations"
                 ) { result in
-                        locationController.showAlert("Success")
+                    // The Result was thrown away and "Success" reported either way, so a
+                    // failed export looked exactly like one that worked.
+                    switch result {
+                    case .success(let url):
+                        locationController.showAlert("Saved to \(url.lastPathComponent)")
+
+                    case .failure(let error):
+                        locationController.showAlert(error.localizedDescription)
                     }
+                }
                 Button("Import") {
                     isImporting.toggle()
                 }.fileImporter(
