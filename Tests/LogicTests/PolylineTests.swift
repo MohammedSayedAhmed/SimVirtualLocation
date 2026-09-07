@@ -51,4 +51,39 @@ final class PolylineTests: XCTestCase {
         let index = Polyline.nearestVertex(to: target, in: path)
         XCTAssertLessThanOrEqual(Geo.distance(path[index], target), 6)
     }
+
+    func testNearestVertexWindowKeepsTheSearchWhereTheDeviceIs() {
+        // A there-and-back route whose return leg runs half a step out of phase, so a
+        // vertex of the way back lands exactly on a point of the way out. Searching the
+        // whole route then answers "you are nearly home" for a device that has just left.
+        let out = stride(from: 0.0, through: 1_000.0, by: 10).map(Geo.point(atMetres:))
+        let back = stride(from: 995.0, through: 5.0, by: -10).map(Geo.point(atMetres:))
+        let path = out + back
+        let onTheWayOut = Geo.point(atMetres: 205)
+
+        let unwindowed = Polyline.nearestVertex(to: onTheWayOut, in: path)
+        let windowed = Polyline.nearestVertex(
+            to: onTheWayOut, in: path, near: 19, lookBehind: 3, lookAhead: 100)
+
+        XCTAssertGreaterThan(unwindowed, path.count - 30, "the global search lands on the way back")
+        XCTAssertLessThanOrEqual(windowed, 21, "the windowed search stays on the way out")
+        XCTAssertLessThanOrEqual(Geo.distance(path[windowed], onTheWayOut), 6)
+    }
+
+    func testNearestVertexClampsAWindowThatRunsOffEitherEnd() {
+        let path = Polyline.resample(Geo.line(metres: 200, count: 2), step: 10)
+
+        // Anchored past the end, and anchored before the start, with a window wider than
+        // the path — neither may trap or reach outside the array.
+        XCTAssertEqual(
+            Polyline.nearestVertex(to: path.last!, in: path, near: 9_999, lookBehind: 9_999, lookAhead: 9_999),
+            path.count - 1)
+        XCTAssertEqual(
+            Polyline.nearestVertex(to: path.first!, in: path, near: -5, lookBehind: 9_999, lookAhead: .max),
+            0)
+    }
+
+    func testNearestVertexOnAnEmptyPathIsHarmless() {
+        XCTAssertEqual(Polyline.nearestVertex(to: Geo.line(metres: 10, count: 2)[0], in: []), 0)
+    }
 }

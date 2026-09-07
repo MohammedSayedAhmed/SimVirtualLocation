@@ -32,6 +32,7 @@ let package = Package(
                 "Logic/LocationHoldSupervisor.swift",
                 "Utilities/CoordinateParsing.swift",
                 "Utilities/Polyline.swift",
+                "Utilities/RouteProgress.swift",
                 "Utilities/DriveProfile.swift",
                 "Utilities/GPXRoute.swift",
             ]

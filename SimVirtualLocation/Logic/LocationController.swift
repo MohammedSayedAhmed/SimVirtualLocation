@@ -142,22 +142,29 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
     /// Journey time the user wants, in minutes. Applying it derives the speed.
     @Published var targetDurationMinutes: String = ""
 
-    /// Route being played, and how much of it the device has already covered. Used to
-    /// rebuild the remainder when the speed changes mid-route.
-    /// The route being played, resampled to a fine, even spacing at playback start.
-    /// Never rebased mid-route: restarts cut from it, they do not replace it.
-    private var playbackCoordinates: [CLLocationCoordinate2D] = []
+    /// The route being played and how far along it the device has got. Restarts cut from
+    /// it; it is never rebased mid-route. Nil when no route is being played.
+    private var playback: RouteProgress?
 
-    /// The last point the device reported playing. Restarting from here is exact
-    /// whatever the GPX's own point density was — an index into the route is not,
-    /// because the played file has a different number of points than the route.
-    private var playbackPosition: CLLocationCoordinate2D?
+    /// When the running route was suspended by the device going away, so a reconnect can
+    /// tell "the cable came out a minute ago" from "this has been sitting here all night".
+    private var playbackPausedAt: Date?
 
     /// The seed and traffic estimate the route started with, so a mid-route restart
     /// keeps the same lights and the same share of the same estimate.
     private var playbackSeed: UInt64 = 1
     private var playbackEstimate: TimeInterval = 0
     private var speedChangeWork: DispatchWorkItem?
+
+    /// How little of a route may be left before it counts as driven. Route vertices are
+    /// ten metres apart, so this is a vertex or two — close enough that replaying it
+    /// would be a few seconds of shuffling on the spot rather than a drive.
+    private static let arrivalTolerance: CLLocationDistance = 15
+
+    /// How long a route suspended by a disconnect may wait before a reconnect stops
+    /// picking it up. Coming back to a paused drive minutes later means carrying on;
+    /// finding one from yesterday means the drive is over, whatever the state says.
+    private static let resumeWindow: TimeInterval = 20 * 60
 
     /// How often connected devices are rescanned. Scanning shells out to pymobiledevice3,
     /// so poll briskly only while waiting for a device to appear and back off once one is
@@ -271,9 +278,12 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
                 }
 
                 let coordinate = CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
-                self.playbackPosition = coordinate
+                self.playback?.advance(to: coordinate)
                 self.mapScene.removeSimulationAnnotationFromMap()
                 self.mapScene.placeSimulationAnnotation(at: coordinate)
+
+                // Nothing else will say the drive is over: see finishRouteIfArrived.
+                self.finishRouteIfArrived()
             }
         }
 
@@ -519,6 +529,7 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
         timer?.invalidate()
         timer = nil
         isPaused = true
+        if isPlayingRoute, playbackPausedAt == nil { playbackPausedAt = Date() }
         activity = .failed("Device disconnected — simulation paused")
 
         // A lost hold beeps and asks for attention because nobody is watching the Mac
@@ -597,8 +608,8 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
         targetDurationMinutes = ""
         tracks = []
         tracksTimes = [:]
-        playbackCoordinates = []
-        playbackPosition = nil
+        playback = nil
+        playbackPausedAt = nil
         playbackSeed = 1
         playbackEstimate = 0
     }
@@ -812,6 +823,7 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
         isSimulating = false
         isPlayingRoute = false
         isPaused = false
+        playbackPausedAt = nil
         persistHeldPoint(nil)
         locationHold.release()
         runner.stop()
@@ -827,7 +839,7 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
                     runner.resumeRoutePlayback()
                 } else {
                     // Playback died with the connection; replay what is left of the route.
-                    restartPlaybackFromCurrentPosition()
+                    restartPlaybackFromCurrentPosition(reason: "resuming")
                 }
             }
             isPaused = false
@@ -852,43 +864,59 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
         guard isSimulating, isPlayingRoute, !isPaused else { return }
 
         let work = DispatchWorkItem { [weak self] in
-            self?.restartPlaybackFromCurrentPosition()
+            guard let self else { return }
+            self.restartPlaybackFromCurrentPosition(reason: "speed changed to \(Int(self.speed)) km/h")
         }
         speedChangeWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
     }
 
-    private func restartPlaybackFromCurrentPosition() {
+    /// Replay whatever is left of the route, from where the device actually is.
+    ///
+    /// - Parameter reason: why the route is being rebuilt, for the log line — a restart
+    ///   has always said "speed changed", including the ones that had nothing to do with
+    ///   the slider.
+    private func restartPlaybackFromCurrentPosition(reason: String) {
         guard isSimulating, isPlayingRoute else { return }
         guard !connectedDevices.isEmpty else {
             activity = .failed("No device connected")
             return
         }
 
-        guard playbackCoordinates.count > 1 else { return }
+        guard let playback, playback.path.count > 1 else { return }
+
+        // What is left is measured in metres, not in vertices. Counting vertices read a
+        // finished drive — whose last reported point sits just short of the final vertex
+        // — as "a few points to go", and replayed a route of zero length: a handful of
+        // seconds of shuffling on the spot, after which nothing held the destination.
+        guard !playback.hasArrived(within: Self.arrivalTolerance) else {
+            log("the route is already at its destination — keeping the device there")
+            concludeRoute(at: playback.position ?? playback.destination)
+            return
+        }
 
         // Cut at the point the device last reported, not at a counted index: the GPX
         // holds a different number of points than the route (denser when realistic,
         // speed-dependent when not), so an index into one means nothing in the other.
-        let cut = playbackPosition.map { Polyline.nearestVertex(to: $0, in: playbackCoordinates) } ?? 0
-        let remaining = Array(playbackCoordinates[cut...])
-        guard remaining.count > 1 else { return }
-
-        runner.stopRoutePlayback()
+        let remaining = playback.remainingPath
+        guard remaining.count > 1 else {
+            log("the route is already at its destination — keeping the device there")
+            concludeRoute(at: playback.position ?? playback.destination)
+            return
+        }
 
         do {
             // The remainder gets the remaining share of the estimate the route STARTED
-            // with, measured against the whole route — playbackCoordinates is never
-            // rebased, so a second restart still shares out the same whole.
-            let cumulative = Polyline.cumulativeDistances(playbackCoordinates)
-            let total = cumulative.last ?? 0
-            let fraction = total > 0 ? 1 - (cumulative[cut] / total) : 1.0
-
+            // with, measured against the whole route — the progress is never rebased, so
+            // a second restart still shares out the same whole.
+            //
+            // Built before the running session is stopped: writing the file can fail, and
+            // killing playback first meant a failure left the device on real GPS.
             let url = try writeDriveGPX(
                 coordinates: remaining,
                 speedKph: speed,
                 expectedTravelTime: playbackEstimate,
-                fraction: fraction,
+                fraction: playback.remainingFraction,
                 seed: playbackSeed
             )
             let connection = iosConnection
@@ -897,8 +925,8 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
                 try await runner.playRoute(gpxURL: url, connection: connection, activityLabel: "Route playing", showAlert: showAlert)
             }
 
-            let km = (total - cumulative[cut]) / 1000
-            log("speed changed to \(Int(speed)) km/h — replaying the remaining \(String(format: "%.1f", km)) km")
+            let km = playback.remainingDistance / 1000
+            log("\(reason) — replaying the remaining \(String(format: "%.1f", km)) km")
         } catch {
             showAlert(error.localizedDescription)
         }
@@ -1147,8 +1175,8 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
 
         // Ten-metre spacing, so "the vertex nearest the played position" is within ten
         // metres of the truth. Raw route polylines put a whole straight between vertices.
-        playbackCoordinates = Polyline.resample(coordinates, step: 10)
-        playbackPosition = nil
+        playback = RouteProgress(path: Polyline.resample(coordinates, step: 10))
+        playbackPausedAt = nil
         playbackSeed = Self.driveSeed(for: coordinates)
         playbackEstimate = routeExpectedTravelTime
 
@@ -1589,32 +1617,87 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
     ///
     /// Playback is re-issued from the last point the device reported, so an interrupted
     /// drive continues rather than restarting. A route that had already reached its end
-    /// when the device went away has nothing left to drive, so its endpoint is held —
+    /// when the device went away has nothing left to drive, so its destination is held —
     /// which is what would have happened had the device stayed.
     private func resumeRouteAfterReconnect() {
         guard isSimulating, isPlayingRoute else { return }
 
-        let remainingCount = playbackPosition
-            .map { playbackCoordinates.count - Polyline.nearestVertex(to: $0, in: playbackCoordinates) }
-            ?? playbackCoordinates.count
+        guard let playback else {
+            // Nothing to resume and nothing to hold: end the route rather than leave the
+            // app claiming to be driving one.
+            endRoutePlayback()
+            return
+        }
 
-        guard remainingCount > 1 else {
-            log("the route had finished while the device was away — holding its endpoint")
-            isPlayingRoute = false
-            isSimulating = false
-            isPaused = false
-            if let endpoint = playbackPosition ?? playbackCoordinates.last {
-                holdLocation(endpoint)
-            }
+        // Distance decides this, not a count of route vertices. The count could not tell
+        // "a couple of vertices short of the end" from "a couple of vertices of road
+        // left", so a drive that had finished was resumed as a zero-length replay, and a
+        // drive that had barely started could be declared finished and frozen near its
+        // start.
+        if playback.hasArrived(within: Self.arrivalTolerance) {
+            log("the route had finished while the device was away — keeping it at the destination")
+            concludeRoute(at: playback.position ?? playback.destination)
+            return
+        }
+
+        // A drive interrupted minutes ago is worth continuing. One interrupted last night
+        // is not: carrying on now would set off across town at a time the user never
+        // asked for. Freeze where it stopped instead — visible, and still not real GPS.
+        if let pausedAt = playbackPausedAt, Date().timeIntervalSince(pausedAt) > Self.resumeWindow {
+            let minutes = Int(Date().timeIntervalSince(pausedAt) / 60)
+            log("the route had been interrupted for \(minutes) min — holding where it stopped instead of driving on")
+            concludeRoute(at: playback.position ?? playback.start)
             return
         }
 
         log("device is back — resuming the route from where it stopped")
         isPaused = false
-        restartPlaybackFromCurrentPosition()
+        playbackPausedAt = nil
+        restartPlaybackFromCurrentPosition(reason: "device is back")
+    }
+
+    /// The drive has reached its destination.
+    ///
+    /// Nothing else reports this. `simulate-location play` does not exit when its file
+    /// runs out — it parks with the DVT session open — so the end of a route produces no
+    /// process exit and no callback at all. Arrival has to be noticed here, from the
+    /// device's own reports against the route's geometry.
+    ///
+    /// Noticing it is what makes the destination durable: the parked session is holding
+    /// the point, but nothing was watching that session, so when it eventually died the
+    /// phone went back to real GPS with the app still showing a route in progress.
+    private func finishRouteIfArrived() {
+        guard isPlayingRoute,
+              let playback,
+              playback.hasArrived(within: Self.arrivalTolerance) else { return }
+
+        log("route finished — the device stays at the destination")
+        concludeRoute(at: playback.position ?? playback.destination)
+    }
+
+    /// End the route and keep the device where it got to.
+    ///
+    /// The point is taken over from the session already holding it where there is one —
+    /// replacing a live session hands the point back to real GPS for as long as the
+    /// replacement takes to connect — and applied afresh where there is not.
+    private func concludeRoute(at endpoint: CLLocationCoordinate2D?) {
+        endRoutePlayback()
+
+        guard let endpoint else { return }
+
+        if usesPlaybackHold, runner.isPlaybackRunning {
+            persistHeldPoint(endpoint)
+            locationHold.adopt(endpoint)
+        } else {
+            holdLocation(endpoint)
+        }
     }
 
     /// A route playback process ended without being told to.
+    ///
+    /// Since `play` parks rather than exiting when its file runs out, this is a session
+    /// that died — the device went away, the tunnel dropped, pymobiledevice3 failed —
+    /// and never the road running out.
     ///
     /// Only a user-started route is finished here. The stationary hold and day-plan
     /// legs play through the same command, but the hold supervisor and the plan's tick
@@ -1622,30 +1705,32 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
     private func handleRoutePlaybackFinished(succeeded: Bool) {
         guard isPlayingRoute else { return }
 
-        // The device going away is what ended this, not the road running out. Holding
-        // now would spawn a session against a connection that no longer exists, and
-        // would throw away the route in the process. Stay paused; the reconnect picks
-        // it up, and holds the endpoint there if the drive had in fact finished.
+        // The device going away is what ended this. Holding now would spawn a session
+        // against a connection that no longer exists, and would throw away the route in
+        // the process. Stay paused; the reconnect picks it up, and holds the destination
+        // there if the drive had in fact finished.
         guard !connectedDevices.isEmpty else {
             isPaused = true
+            if playbackPausedAt == nil { playbackPausedAt = Date() }
             log("route playback stopped with the device away — it resumes when the device returns")
             return
         }
 
-        isPlayingRoute = false
-        isSimulating = false
-        isPaused = false
-        timer?.invalidate()
-        timer = nil
-        currentTrackIndex = 0
+        // Died mid-drive with the device still attached: the phone is on real GPS as of
+        // now, so put the last point it reported back on and say so.
+        let endpoint = playback?.position ?? playback?.destination
 
-        // Arrived or died, the device must not drift back to real GPS: hold wherever
-        // the drive got to. On a clean finish that is the destination.
-        guard let endpoint = playbackPosition ?? playbackCoordinates.last else { return }
-        log(succeeded
-            ? "route finished — holding the destination"
-            : "route playback ended early — holding the last played point")
-        holdLocation(endpoint)
+        let outcome: String
+        if playback?.hasArrived(within: Self.arrivalTolerance) == true {
+            outcome = "route finished — the device stays at the destination"
+        } else if succeeded {
+            outcome = "the drive's session ended early — holding the last point it reached"
+        } else {
+            outcome = "the drive's session failed — holding the last point it reached"
+        }
+        log(outcome)
+
+        concludeRoute(at: endpoint)
     }
 
     /// Writes the GPX for a stretch of driving, realistic or constant-speed.
@@ -1754,8 +1839,24 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
 
     /// Applies `coordinate` and keeps it applied, rather than setting it once.
     private func holdLocation(_ coordinate: CLLocationCoordinate2D) {
+        // A point the user asks for replaces whatever the device was doing. Dropping a
+        // pin mid-route used to leave the route "playing" underneath it: every
+        // confirmation of the held point was then read as the route moving, and a
+        // reconnect had two things — the hold and the route — both driving the device.
+        endRoutePlayback()
         persistHeldPoint(coordinate)
         locationHold.hold(coordinate)
+    }
+
+    /// Stop treating a route as in progress, without touching whatever holds the point.
+    private func endRoutePlayback() {
+        isPlayingRoute = false
+        isSimulating = false
+        isPaused = false
+        playbackPausedAt = nil
+        timer?.invalidate()
+        timer = nil
+        currentTrackIndex = 0
     }
 
     /// Remembers the held point so a crash, a forced quit, or a Mac restart resumes it on

@@ -56,11 +56,36 @@ enum Polyline {
     ///
     /// Meant for a finely resampled path, where the nearest vertex is within a step of
     /// the true nearest point; on a raw polyline it can be off by a whole straight.
-    static func nearestVertex(to point: CLLocationCoordinate2D, in path: [CLLocationCoordinate2D]) -> Int {
-        var best = 0
+    ///
+    /// Searching the whole path answers "which vertex is nearest", which is not the same
+    /// question as "how far along is the device" — and on a route that comes back near
+    /// itself the two answers differ by the length of the route. Pass `near` (plus the
+    /// window either side of it) to ask the second question: the search is then confined
+    /// to the stretch reachable from where the device already was.
+    ///
+    /// - Parameters:
+    ///   - near: where the answer is expected, usually the previous answer.
+    ///   - lookBehind: how many vertices before `near` may still be chosen.
+    ///   - lookAhead: how many vertices past `near` may be chosen.
+    static func nearestVertex(
+        to point: CLLocationCoordinate2D,
+        in path: [CLLocationCoordinate2D],
+        near: Int = 0,
+        lookBehind: Int = 0,
+        lookAhead: Int = .max
+    ) -> Int {
+        guard !path.isEmpty else { return 0 }
+
+        let anchor = min(max(near, 0), path.count - 1)
+        let lower = max(0, anchor - max(lookBehind, 0))
+        // Written as a comparison rather than `anchor + lookAhead` because the default
+        // lookAhead is Int.max, and adding to it traps.
+        let upper = lookAhead >= path.count - anchor ? path.count - 1 : anchor + lookAhead
+
+        var best = lower
         var bestDistance = CLLocationDistance.greatestFiniteMagnitude
-        for (index, vertex) in path.enumerated() {
-            let distance = CLLocation.distance(from: point, to: vertex)
+        for index in lower...upper {
+            let distance = CLLocation.distance(from: point, to: path[index])
             if distance < bestDistance {
                 bestDistance = distance
                 best = index

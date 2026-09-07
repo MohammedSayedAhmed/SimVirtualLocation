@@ -105,6 +105,40 @@ final class LocationHoldSupervisorTests: XCTestCase {
         XCTAssertEqual(applied.count, 2, "no session means the point is not in force")
     }
 
+    // MARK: - Taking over the session a finished drive leaves behind
+
+    func testAdoptTakesOverALiveSessionWithoutReapplying() {
+        // `play` parks at the end of its file instead of exiting, so the last point of a
+        // finished drive is still applied by a session that is up. Applying it again
+        // would tear that session down and hand the point back for a second or two.
+        let supervisor = makeSupervisor()
+        sessionAlive = true
+        supervisor.adopt(point)
+
+        XCTAssertTrue(supervisor.isHolding)
+        XCTAssertEqual(applied.count, 0, "the point is already applied — do not apply it again")
+        guard case .held = supervisor.state else { return XCTFail("expected held, got \(supervisor.state)") }
+
+        advance(60)
+        supervisor.reapply(trigger: .keepAlive)
+        XCTAssertEqual(applied.count, 0, "a live session is the hold")
+    }
+
+    func testAnAdoptedPointIsReappliedOnceItsSessionDies() {
+        // The whole reason to adopt rather than walk away: when the parked session
+        // eventually dies, something has to put the destination back.
+        let supervisor = makeSupervisor()
+        sessionAlive = true
+        supervisor.adopt(point)
+
+        sessionAlive = false
+        advance(15)
+        supervisor.reapply(trigger: .keepAlive)
+
+        XCTAssertEqual(applied.count, 1, "the destination must go back on when its session goes")
+        XCTAssertEqual(applied.first, Coordinate(point))
+    }
+
     // MARK: - An absent target is never reported as held
 
     func testAnUnavailableTargetFailsRatherThanClaimingSuccess() {

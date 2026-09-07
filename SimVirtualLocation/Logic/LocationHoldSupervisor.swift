@@ -150,6 +150,26 @@ final class LocationHoldSupervisor {
         apply?(point.clCoordinate)
     }
 
+    /// Starts holding `coordinate`, which a session already up is applying.
+    ///
+    /// `simulate-location play` does not exit when its file runs out — it parks with the
+    /// DVT session open — so the last point of a finished drive is already applied by a
+    /// process that is still alive. Applying it again would tear that session down and
+    /// hand the point back to real GPS for the seconds a replacement takes to connect.
+    /// The point is taken over as-is instead, and the keep-alive steps in only if the
+    /// session that holds it dies.
+    func adopt(_ coordinate: CLLocationCoordinate2D) {
+        let point = Coordinate(coordinate)
+        held = point
+        applyStartedAt = nil
+        state = .held(point, confirmedAt: now())
+
+        beginActivity()
+        restartTimer()
+
+        log?("Holding \(point.formatted) — the drive's own session still has it, re-applied if it drops")
+    }
+
     /// Stops holding. The device keeps whatever was last applied until it lapses.
     func release() {
         guard held != nil else { return }

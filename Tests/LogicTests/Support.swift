@@ -25,6 +25,15 @@ enum Geo {
         line(metres: metres, count: count).map(Coordinate.init)
     }
 
+    /// The point `metres` along that same due-north line, so a route can be laid out by
+    /// distance rather than by index.
+    static func point(atMetres metres: CLLocationDistance) -> CLLocationCoordinate2D {
+        CLLocationCoordinate2D(
+            latitude: baseLatitude + metres / metresPerDegreeLatitude,
+            longitude: baseLongitude
+        )
+    }
+
     /// Metres in one degree of latitude at the base point, measured, not assumed.
     static let metresPerDegreeLatitude: CLLocationDistance = CLLocation.distance(
         from: CLLocationCoordinate2D(latitude: baseLatitude, longitude: baseLongitude),
