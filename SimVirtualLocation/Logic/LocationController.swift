@@ -1688,6 +1688,9 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
         if usesPlaybackHold, runner.isPlaybackRunning {
             persistHeldPoint(endpoint)
             locationHold.adopt(endpoint)
+            // Nothing new is launched on this path, so nothing else would move the
+            // banner off "Route playing" — which is the one thing that is no longer true.
+            activity = .active("Location set")
         } else {
             holdLocation(endpoint)
         }
