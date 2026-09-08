@@ -225,13 +225,13 @@ struct DayPlanPanel: View {
         case .waiting(let stopIndex, let until):
             guard let stop = locationController.daySchedule?.stops[safe: stopIndex] else { return nil }
             guard let until else { return "At \(stop.name) for the rest of the day" }
-            return "At \(stop.name) until \(Self.clock.string(from: until))"
+            return "At \(stop.name) until \(DayPlanClock.string(from: until))"
 
         case .travelling(let legIndex, let arrival):
             guard let schedule = locationController.daySchedule,
                   let leg = schedule.legs[safe: legIndex],
                   let to = schedule.stops[safe: leg.fromIndex + 1] else { return nil }
-            return "On the way to \(to.name), arriving \(Self.clock.string(from: arrival))"
+            return "On the way to \(to.name), arriving \(DayPlanClock.string(from: arrival))"
         }
     }
 
@@ -239,7 +239,7 @@ struct DayPlanPanel: View {
         guard let schedule = locationController.daySchedule else { return nil }
         guard let leg = schedule.legs.first(where: { $0.fromIndex == index - 1 }) else { return nil }
 
-        let arrival = Self.clock.string(from: leg.arrival)
+        let arrival = DayPlanClock.string(from: leg.arrival)
         let distance = String(format: "%.1f km", leg.distance / 1000)
 
         if leg.isLate {
@@ -248,12 +248,6 @@ struct DayPlanPanel: View {
         return "Arrive \(arrival) · \(distance)"
     }
 
-    private static let clock: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "HH:mm"
-        return formatter
-    }()
 }
 
 extension Array {

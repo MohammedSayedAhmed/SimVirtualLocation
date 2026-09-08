@@ -133,21 +133,22 @@ class Runner {
         NotificationSender.postNotification(for: location, to: simulators)
     }
     
-    func runOnIos(
+    /// Applies one point with `simulate-location set`, whichever CLI shape asked for it.
+    ///
+    /// The two callers below were the same ninety lines twice, differing only in the
+    /// arguments they built and the progress string they showed. They were not kept in
+    /// step: `git log -L` over the two ranges shows the negative-latitude fix and the
+    /// old-device fix landing in one copy, and the `--` fix and iOS 17 support landing
+    /// in the other. Everything here — the reaped-PID guard that keeps a routine SIGTERM
+    /// traceback from aborting a route, the session-ended report that puts a held point
+    /// back, the readiness banner — is load-bearing, and now has one place to be fixed.
+    private func runLocationSet(
+        args: [String],
         location: CLLocationCoordinate2D,
+        progress: String,
         showAlert: @escaping (String) -> Void
     ) async throws {
-        let task = try await self.taskForIOS(
-            args: [
-                "developer",
-                "simulate-location",
-                "set",
-                "--",
-                "\(String(format: "%.5f", location.latitude))",
-                "\(String(format: "%.5f", location.longitude))"
-            ],
-            showAlert: showAlert
-        )
+        let task = try await self.taskForIOS(args: args, showAlert: showAlert)
 
         self.log?("set iOS location \(location.description)")
         self.log?("task: \(task.logDescription)")
@@ -205,7 +206,7 @@ class Runner {
             }
         }
 
-        onActivity?(.working("Connecting to device…"))
+        onActivity?(.working(progress))
 
         do {
             try task.run()
@@ -230,6 +231,28 @@ class Runner {
         }
     }
 
+    func runOnIos(
+        location: CLLocationCoordinate2D,
+        showAlert: @escaping (String) -> Void
+    ) async throws {
+        try await runLocationSet(
+            // Five decimal places, as this path has always sent them. The newer CLI is
+            // given full precision just below; which the older one prefers is a question
+            // for a change that can test it on an old device, not for a de-duplication.
+            args: [
+                "developer",
+                "simulate-location",
+                "set",
+                "--",
+                "\(String(format: "%.5f", location.latitude))",
+                "\(String(format: "%.5f", location.longitude))"
+            ],
+            location: location,
+            progress: "Connecting to device…",
+            showAlert: showAlert
+        )
+    }
+
     func runOnNewIos(
         location: CLLocationCoordinate2D,
         connection: IOSConnection,
@@ -242,92 +265,14 @@ class Runner {
             return
         }
 
-        let task = try await self.taskForIOS(
+        try await runLocationSet(
             args: ["developer", "dvt", "simulate-location", "set"]
                 + connectionArguments
                 + ["--", "\(location.latitude)", "\(location.longitude)"],
+            location: location,
+            progress: connection.progressDescription,
             showAlert: showAlert
         )
-
-        self.log?("set iOS location \(location.description)")
-        self.log?("task: \(task.logDescription)")
-
-        let inputPipe = Pipe()
-        let outputPipe = Pipe()
-        let errorPipe = Pipe()
-
-        task.standardInput = inputPipe
-        task.standardOutput = outputPipe
-        task.standardError = errorPipe
-
-        // `pymobiledevice3 simulate-location set` ends in `OSUTILS.wait_return()`, which
-        // parks in `signal.sigwait` and never exits on its own. Blocking here on
-        // `waitUntilExit()` therefore holds a Swift cooperative thread forever, and that
-        // pool is sized to the CPU core count — so a route stalls after exactly as many
-        // waypoints as the Mac has cores. Collect stderr from a termination handler.
-        task.terminationHandler = { [weak self] finished in
-            guard let self = self else { return }
-
-            let wasReaped = self.runnerQueue.sync {
-                self.reapedPIDs.remove(finished.processIdentifier) != nil
-            }
-            guard !wasReaped else { return }
-
-            let errorData = (try? errorPipe.fileHandleForReading.readToEnd()) ?? nil
-            let errorText = errorData.map { String(decoding: $0, as: UTF8.self) } ?? ""
-
-            // Report the session ending before judging whether it failed. Even a clean
-            // exit hands the point back to real GPS once the device's grace period runs
-            // out, so whoever is holding it needs to know either way.
-            self.onSessionEnded?(finished.terminationStatus == 0 ? nil : Self.summarize(errorText))
-
-            // A clean exit is not a failure: `play` logs every waypoint to stderr, so
-            // surfacing stderr unconditionally would alert at the end of every route.
-            guard finished.terminationStatus != 0, !errorText.isEmpty else { return }
-
-            self.onActivity?(.failed(Self.summarize(errorText)))
-
-            Task { @MainActor in
-                showAlert(errorText)
-            }
-        }
-
-        // `simulate-location set` prints wait_return()'s "Press Ctrl+C" banner to stdout
-        // immediately after the location has been applied — use it as a readiness signal.
-        let readyPipe = outputPipe
-        readyPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
-            let chunk = handle.availableData
-            guard !chunk.isEmpty else { return }
-            if String(decoding: chunk, as: UTF8.self).contains("Ctrl+C") {
-                readyPipe.fileHandleForReading.readabilityHandler = nil
-                self?.onActivity?(.active("Location set"))
-                self?.onLocationConfirmed?()
-            }
-        }
-
-        onActivity?(.working(connection.progressDescription))
-
-        do {
-            try task.run()
-
-            // Retire older processes rather than calling stop(), which tears down every
-            // task, silently aborting the run in progress.
-            self.runnerQueue.async {
-                while self.tasks.count >= self.maxLiveTasks {
-                    let old = self.tasks.removeFirst()
-                    if old.isRunning {
-                        self.reapedPIDs.insert(old.processIdentifier)
-                        old.terminate()
-                    }
-                }
-                self.tasks.append(task)
-            }
-        } catch {
-            Task { @MainActor in
-                showAlert(error.localizedDescription)
-            }
-            return
-        }
     }
 
     /// Replay an entire route with a single `simulate-location play` process.

@@ -18,6 +18,13 @@ enum Polyline {
         return cumulative
     }
 
+    /// The same, over the `Coordinate` values the day plan stores.
+    ///
+    /// The day plan wrote this loop out twice by hand rather than convert.
+    static func cumulativeDistances(_ path: [Coordinate]) -> [CLLocationDistance] {
+        cumulativeDistances(path.map(\.clCoordinate))
+    }
+
     /// `path` re-emitted as points a fixed `step` apart, ending on the original endpoint.
     ///
     /// Route polylines put vertices where the road bends, so a long straight is two points

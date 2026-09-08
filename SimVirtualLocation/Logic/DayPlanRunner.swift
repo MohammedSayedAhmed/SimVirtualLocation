@@ -197,13 +197,7 @@ final class DayPlanRunner {
 
         guard let joining = DaySchedule.interpolate(path, fraction: clamped) else { return path }
 
-        var cumulative: [CLLocationDistance] = [0]
-        for index in 1..<path.count {
-            cumulative.append(
-                cumulative[index - 1]
-                    + CLLocation.distance(from: path[index - 1].clCoordinate, to: path[index].clCoordinate)
-            )
-        }
+        let cumulative = Polyline.cumulativeDistances(path)
 
         guard let total = cumulative.last, total > 0 else { return path }
         let target = clamped * total
@@ -212,12 +206,5 @@ final class DayPlanRunner {
         return [Coordinate(joining)] + path[nextIndex...]
     }
 
-    private static let timeFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "HH:mm"
-        return formatter
-    }()
-
-    private static func time(_ date: Date) -> String { timeFormatter.string(from: date) }
+    private static func time(_ date: Date) -> String { DayPlanClock.string(from: date) }
 }

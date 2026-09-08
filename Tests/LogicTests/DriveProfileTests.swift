@@ -96,3 +96,38 @@ final class DriveProfileTests: XCTestCase {
         XCTAssertGreaterThan(fitted.last!.offset, 0)
     }
 }
+
+/// The seed decides where the lights and jams fall. It has to be stable across replays
+/// and across app launches — a mid-route restart that reshuffled the drive would move
+/// traffic the device had already passed.
+final class DriveSeedTests: XCTestCase {
+
+    private let route = Geo.line(metres: 1000, count: 5)
+
+    func testTheSameRouteAlwaysSeedsTheSame() {
+        XCTAssertEqual(DriveProfile.seed(for: route), DriveProfile.seed(for: route))
+    }
+
+    func testDifferentRoutesSeedDifferently() {
+        let other = Geo.line(metres: 2000, count: 5)
+        XCTAssertNotEqual(DriveProfile.seed(for: route), DriveProfile.seed(for: other))
+    }
+
+    func testAnEmptyRouteStillYieldsAUsableSeed() {
+        // Zero is the one value SeededGenerator has to special-case, so never hand it one.
+        XCTAssertNotEqual(DriveProfile.seed(for: []), 0)
+        XCTAssertNotEqual(DriveProfile.seed(for: route), 0)
+    }
+
+    func testTheGeneratorIsDeterministicForASeed() {
+        var first = DriveProfile.SeededGenerator(seed: 12345)
+        var second = DriveProfile.SeededGenerator(seed: 12345)
+        XCTAssertEqual((0..<8).map { _ in first.next() }, (0..<8).map { _ in second.next() })
+    }
+
+    func testAZeroSeedDoesNotCollapseTheGenerator() {
+        var generator = DriveProfile.SeededGenerator(seed: 0)
+        let values = (0..<4).map { _ in generator.next() }
+        XCTAssertEqual(Set(values).count, 4, "a zero seed must not produce a constant stream")
+    }
+}

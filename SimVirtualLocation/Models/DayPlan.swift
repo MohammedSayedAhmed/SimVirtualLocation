@@ -28,6 +28,22 @@ struct DayPlanStop: Identifiable, Codable, Equatable {
     }
 }
 
+/// The one "HH:mm" formatter the day plan uses.
+///
+/// There were two identical ones — the runner's, for its log lines, and the panel's, for
+/// the timetable on screen. DateFormatter is expensive enough to be worth building once.
+enum DayPlanClock {
+
+    static let formatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "HH:mm"
+        return formatter
+    }()
+
+    static func string(from date: Date) -> String { formatter.string(from: date) }
+}
+
 struct DayPlan: Codable, Equatable {
     var stops: [DayPlanStop] = []
 }
@@ -158,14 +174,7 @@ struct DaySchedule: Equatable {
         guard let first = path.first else { return nil }
         guard path.count > 1 else { return first.clCoordinate }
 
-        var cumulative: [CLLocationDistance] = [0]
-        for index in 1..<path.count {
-            let step = CLLocation.distance(
-                from: path[index - 1].clCoordinate,
-                to: path[index].clCoordinate
-            )
-            cumulative.append(cumulative[index - 1] + step)
-        }
+        let cumulative = Polyline.cumulativeDistances(path)
 
         guard let total = cumulative.last, total > 0 else { return first.clCoordinate }
 

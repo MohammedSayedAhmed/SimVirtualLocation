@@ -776,15 +776,7 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
     }
 
     func prepareEmulator() {
-        if adbDeviceId.isEmpty {
-            showAlert("Please specify device id")
-            return
-        }
-
-        if adbPath.isEmpty {
-            showAlert("Please specify path to adb")
-            return
-        }
+        guard hasAdbConfigured() else { return }
 
         // `-s` like every other adb call here: without it adb picks a device itself,
         // so with two attached this configured whichever one it felt like.
@@ -796,15 +788,7 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
     }
 
     func installHelperApp() {
-        if adbDeviceId.isEmpty {
-            showAlert("Please specify device id")
-            return
-        }
-
-        if adbPath.isEmpty {
-            showAlert("Please specify path to adb")
-            return
-        }
+        guard hasAdbConfigured() else { return }
 
         guard let apkURL = Bundle.main.url(forResource: "helper-app", withExtension: "apk") else {
             showAlert("The helper APK is missing from the app bundle.")
@@ -979,37 +963,27 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
             return
         }
 
-        Task {
-            do {
-                let task = try await runner.taskForIOS(
-                    args: [
-                        "mounter",
-                        "mount-developer",
-                        "--udid",
-                        device.id,
-                        makeDeveloperImageDmgPath(iOSVersion: device.version),
-                        makeDeveloperImageSignaturePath(iOSVersion: device.version)
-                    ],
-                    showAlert: showAlert
-                )
-                let result = try ProcessRunner.run(task)
-                Self.presentPymobileDeviceOutput(stdout: result.stdout, stderr: result.stderr, showAlert: showAlert)
-            } catch {
-                showAlert(error.localizedDescription)
-            }
-        }
+        runMounter([
+            "mounter",
+            "mount-developer",
+            "--udid",
+            device.id,
+            makeDeveloperImageDmgPath(iOSVersion: device.version),
+            makeDeveloperImageSignaturePath(iOSVersion: device.version)
+        ])
     }
 
     func unmountDeveloperImage() {
+        // Deliberately still without `--udid`: adding one would mean refusing to unmount
+        // when no device is selected, which is a behaviour change rather than a tidy-up.
+        runMounter(["mounter", "umount-developer"])
+    }
+
+    /// Runs a `mounter` subcommand and puts whatever it printed in front of the user.
+    private func runMounter(_ args: [String]) {
         Task {
             do {
-                let task = try await runner.taskForIOS(
-                    args: [
-                        "mounter",
-                        "umount-developer"
-                    ],
-                    showAlert: showAlert
-                )
+                let task = try await runner.taskForIOS(args: args, showAlert: showAlert)
                 let result = try ProcessRunner.run(task)
                 Self.presentPymobileDeviceOutput(stdout: result.stdout, stderr: result.stderr, showAlert: showAlert)
             } catch {
@@ -1018,33 +992,27 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
         }
     }
 
-    func savePointA() {
-        guard let point = mapScene.annotationEndpoints().first?.coordinate else {
-            showAlert("Point A is not selected")
-            return
-        }
+    func savePointA() { savePin(at: 0, called: "Point A") }
 
-        savedLocations.append(
-            Location(
-                name: "Point A (\(point.latitude) - \(point.longitude))",
-                latitude: point.latitude,
-                longitude: point.longitude
-            )
-        )
+    func savePointB() { savePin(at: 1, called: "Point B") }
 
-        persistSavedLocations()
-    }
-
-    func savePointB() {
+    /// Saves the pin at `index` under a name that records where it was.
+    ///
+    /// A and B were the same method twice, differing only in which endpoint they read
+    /// and what they called it — and the two copies had already drifted into fetching
+    /// that endpoint two different ways. The map holds at most two pins, so an index is
+    /// the whole difference between them.
+    private func savePin(at index: Int, called label: String) {
         let endpoints = mapScene.annotationEndpoints()
-        guard endpoints.count == 2, let point = endpoints.last?.coordinate else {
-            showAlert("Point B is not selected")
+        guard endpoints.indices.contains(index) else {
+            showAlert("\(label) is not selected")
             return
         }
 
+        let point = endpoints[index].coordinate
         savedLocations.append(
             Location(
-                name: "Point B (\(point.latitude) - \(point.longitude))",
+                name: "\(label) (\(point.latitude) - \(point.longitude))",
                 latitude: point.latitude,
                 longitude: point.longitude
             )
@@ -1187,7 +1155,7 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
         // metres of the truth. Raw route polylines put a whole straight between vertices.
         playback = RouteProgress(path: Polyline.resample(coordinates, step: 10))
         playbackPausedAt = nil
-        playbackSeed = Self.driveSeed(for: coordinates)
+        playbackSeed = DriveProfile.seed(for: coordinates)
         playbackEstimate = routeExpectedTravelTime
 
         do {
@@ -1264,16 +1232,27 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
         }
     }
 
-    private func executeAdbCommand(args: [String], successMessage: String? = nil) {
+    /// Whether adb can be run at all, saying what is missing if not.
+    ///
+    /// These two checks were written out four times, and three of those were nested:
+    /// prepareEmulator and installHelperApp each checked, then called executeAdbCommand,
+    /// which checked again.
+    private func hasAdbConfigured() -> Bool {
         if adbDeviceId.isEmpty {
             showAlert("Please specify device id")
-            return
+            return false
         }
 
         if adbPath.isEmpty {
             showAlert("Please specify path to adb")
-            return
+            return false
         }
+
+        return true
+    }
+
+    private func executeAdbCommand(args: [String], successMessage: String? = nil) {
+        guard hasAdbConfigured() else { return }
 
         let task = Process()
         task.executableURL = URL(fileURLWithPath: adbPath)
@@ -1792,29 +1771,6 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
         return try GPXRoute.write(samples: samples)
     }
 
-    /// A stable seed for one route, so its lights do not move between replays.
-    ///
-    /// Not `Hasher`: that is salted differently on every launch of the app, which would
-    /// have reshuffled the drive across a restart — including the day plan resuming
-    /// after one. SplitMix is the same mixer the profile's own generator uses.
-    private static func driveSeed(for coordinates: [CLLocationCoordinate2D]) -> UInt64 {
-        guard let first = coordinates.first, let last = coordinates.last else { return 1 }
-
-        func mix(_ state: UInt64, _ value: UInt64) -> UInt64 {
-            var z = (state ^ value) &+ 0x9E37_79B9_7F4A_7C15
-            z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
-            z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
-            return z ^ (z >> 31)
-        }
-
-        var seed: UInt64 = 0x5D8E_7C31_A2B4_96F1
-        for value in [first.latitude, first.longitude, last.latitude, last.longitude] {
-            seed = mix(seed, UInt64(bitPattern: Int64((value * 10_000).rounded())))
-        }
-        seed = mix(seed, UInt64(coordinates.count))
-        return seed == 0 ? 1 : seed
-    }
-
     private func playPlanLeg(path: [Coordinate], speedKph: Double, duration: TimeInterval) {
         // A leg is movement, not a held point: let go of the hold so the two are not
         // both driving the device.
@@ -1830,7 +1786,7 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
                 coordinates: coordinates,
                 speedKph: speedKph,
                 expectedTravelTime: duration,
-                seed: Self.driveSeed(for: coordinates)
+                seed: DriveProfile.seed(for: coordinates)
             )
         } catch {
             reportInjectionFailure(error)
@@ -2030,15 +1986,7 @@ class LocationController: NSObject, ObservableObject, CLLocationManagerDelegate 
     }
 
     private func runOnAndroid(location: CLLocationCoordinate2D) {
-        if adbDeviceId.isEmpty {
-            showAlert("Please specify device id")
-            return
-        }
-
-        if adbPath.isEmpty {
-            showAlert("Please specify path to adb")
-            return
-        }
+        guard hasAdbConfigured() else { return }
 
         log("""
         Run on android

@@ -299,19 +299,48 @@ enum DriveProfile {
     }
 
     /// Small deterministic generator, so a route drives the same way every time.
+    /// SplitMix64's increment, the fractional part of the golden ratio.
+    static let goldenGamma: UInt64 = 0x9E37_79B9_7F4A_7C15
+
+    /// SplitMix64's finalising mix — the avalanche step both the generator and the route
+    /// seed need. It was written out twice, in two files, with all three constants
+    /// repeated; only the way each one folds its input in ever differed.
+    static func mix(_ value: UInt64) -> UInt64 {
+        var z = value
+        z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
+        z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
+        return z ^ (z >> 31)
+    }
+
     struct SeededGenerator: RandomNumberGenerator {
         private var state: UInt64
 
         init(seed: UInt64) {
-            state = seed == 0 ? 0x9E37_79B9_7F4A_7C15 : seed
+            state = seed == 0 ? DriveProfile.goldenGamma : seed
         }
 
         mutating func next() -> UInt64 {
-            state &+= 0x9E37_79B9_7F4A_7C15
-            var z = state
-            z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
-            z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
-            return z ^ (z >> 31)
+            state &+= DriveProfile.goldenGamma
+            return DriveProfile.mix(state)
         }
+    }
+
+    /// A stable seed for one route, so its lights and jams do not move between replays.
+    ///
+    /// Not `Hasher`: that is salted differently on every launch, which would reshuffle
+    /// the drive across a restart — including a day plan resuming after one.
+    static func seed(for coordinates: [CLLocationCoordinate2D]) -> UInt64 {
+        guard let first = coordinates.first, let last = coordinates.last else { return 1 }
+
+        func fold(_ state: UInt64, _ value: UInt64) -> UInt64 {
+            mix((state ^ value) &+ goldenGamma)
+        }
+
+        var seed: UInt64 = 0x5D8E_7C31_A2B4_96F1
+        for value in [first.latitude, first.longitude, last.latitude, last.longitude] {
+            seed = fold(seed, UInt64(bitPattern: Int64((value * 10_000).rounded())))
+        }
+        seed = fold(seed, UInt64(coordinates.count))
+        return seed == 0 ? 1 : seed
     }
 }
